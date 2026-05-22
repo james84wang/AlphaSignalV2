@@ -1,0 +1,176 @@
+# AlphaSignal — Strategy Configuration
+# ALL weights, thresholds, and scoring tables live here.
+# Weights across all components MUST sum to 100.
+
+# ── §2.1 Signal Thresholds ─────────────────────────────────────────────────────
+thresholds:
+  strong_buy: 85      # composite > strong_buy  → Strong Buy
+  buy: 70             # composite > buy         → Buy
+  sell: -70           # composite < sell        → Sell
+  strong_sell: -85    # composite < strong_sell → Strong Sell
+
+# ── §2.2 Component Weights ─────────────────────────────────────────────────────
+# Must sum to 100.
+weights:
+  candlestick: 12
+  p3: 8
+  p5: 12
+  volume: 10
+  ema: 15
+  sr: 15
+  macd: 18
+  rsi: 10
+
+# ── §3 Regime Filter ───────────────────────────────────────────────────────────
+regime:
+  ema_period: 200
+  slope_lookback: 20    # bars back to measure EMA200 slope sign
+
+# ── §4.1 Candlestick Scoring ───────────────────────────────────────────────────
+candlestick:
+  # body_pct: minimum body as fraction of total range for "Long" candle
+  long_candle_body_pct: 0.70
+  # wick_mult: lower/upper wick must be >= wick_mult * body
+  hammer_wick_mult: 2.0
+  # doji_body_pct: body <= doji_body_pct * total range
+  doji_body_pct: 0.05
+  # context multiplier at P5 S/R level (capped at ±100)
+  sr_context_multiplier: 1.2
+
+  scores:
+    long_bullish_candle: 90
+    green_hammer: 80
+    inverted_green_hammer: 55
+    bullish_spinning_top: 25
+    bullish_doji: 20
+    bearish_doji: -20
+    bearish_spinning_top: -25
+    inverted_red_hammer: -80   # Shooting Star
+    red_hammer: -55            # Hanging Man
+    long_bearish_candle: -90
+    no_pattern: 0
+
+# ── §4.2 P3 Pivot Scoring ──────────────────────────────────────────────────────
+p3:
+  window: 3
+  scores:
+    bullish_reversal_at_support: 70
+    bullish_breakout_above_resistance: 60
+    continuation_up: 30
+    no_pattern: 0
+    continuation_down: -30
+    bearish_breakdown_below_support: -60
+    bearish_reversal_at_resistance: -70
+
+# ── §4.3 P5 Pivot Scoring ──────────────────────────────────────────────────────
+p5:
+  window: 5
+  scores:
+    major_bullish_reversal: 85
+    bullish_trend_confirmation: 50
+    range_bound: 0
+    bearish_trend_confirmation: -50
+    major_bearish_reversal: -85
+
+# ── §4.4 Volume Scoring ────────────────────────────────────────────────────────
+volume:
+  avg_period: 30   # days for baseline average
+
+  # Buckets for bullish candle; signs are INVERTED for bearish candle; 0 for doji/spinning top.
+  # rv_min is inclusive, rv_max is exclusive (except the last bucket which is open-ended).
+  bullish_buckets:
+    - {rv_min: 5.0,  rv_max: null, score: 100}
+    - {rv_min: 3.0,  rv_max: 5.0,  score: 80}
+    - {rv_min: 2.0,  rv_max: 3.0,  score: 60}
+    - {rv_min: 1.5,  rv_max: 2.0,  score: 40}
+    - {rv_min: 1.0,  rv_max: 1.5,  score: 20}
+    - {rv_min: 0.8,  rv_max: 1.0,  score: 0}
+    - {rv_min: 0.5,  rv_max: 0.8,  score: -15}
+    - {rv_min: 0.3,  rv_max: 0.5,  score: -30}
+    - {rv_min: 0.2,  rv_max: 0.3,  score: -40}
+    - {rv_min: null, rv_max: 0.2,  score: -50}
+
+# ── §4.5 EMA System ────────────────────────────────────────────────────────────
+ema:
+  periods: [20, 50, 100, 200]
+
+  stacking_scores:
+    full_bull: 60    # price > EMA20 > EMA50 > EMA100 > EMA200
+    above_3: 30      # price above 3 of 4 EMAs
+    above_2: 0       # price above 2 of 4 EMAs
+    below_3: -30     # price below 3 of 4 EMAs
+    full_bear: -60   # price < EMA20 < EMA50 < EMA100 < EMA200
+
+  cross_scores:
+    cross_above_200: 95
+    cross_above_100: 75
+    cross_above_50: 55
+    cross_above_20: 35
+    cross_below_20: -35
+    cross_below_50: -55
+    cross_below_100: -75
+    cross_below_200: -95
+
+# ── §4.6 Support / Resistance ──────────────────────────────────────────────────
+sr:
+  cluster_pct: 0.01          # levels within 1% of each other are clustered
+  breakout_volume_mult: 1.5  # volume must exceed avg * this for breakout/breakdown
+
+  scores:
+    strong_bounce_off_support: 80
+    breakout_above_resistance: 85
+    approach_support: 20
+    no_interaction: 0
+    approach_resistance: -20
+    strong_rejection_off_resistance: -80
+    breakdown_below_support: -85
+
+# ── §4.7 MACD Scoring ──────────────────────────────────────────────────────────
+macd:
+  fast: 12
+  slow: 26
+  signal: 9
+
+  micro_signals:
+    golden_cross: 35        # MACD crosses signal line upward
+    death_cross: -35
+    macd_above_zero: 15
+    macd_below_zero: -15
+    histogram_green_expanding: 20
+    histogram_green_contracting: 5
+    histogram_red_expanding: -20
+    histogram_red_contracting: -5
+    bullish_divergence: 30
+    bearish_divergence: -30
+
+# ── §4.8 RSI Scoring ───────────────────────────────────────────────────────────
+rsi:
+  period: 14
+
+  scores:
+    crosses_up_30: 70        # exits oversold
+    below_30_rising: 40
+    below_30_falling: -10
+    between_30_50_rising: 25
+    between_30_50_falling: -15
+    between_50_70_rising: 25
+    between_50_70_falling: -15
+    above_70_rising: 10
+    above_70_falling: -40
+    crosses_down_70: -70     # exits overbought
+
+# ── §7 Open Question Defaults ──────────────────────────────────────────────────
+universe:
+  default: "US large/mid-cap top 500 by liquidity"
+  timeframe: "daily"
+  watchlist_file: "data/watchlist.csv"
+
+risk:
+  stop_loss_method: "atr"
+  stop_loss_atr_mult: 1.5
+  stop_loss_atr_period: 14
+  position_size_pct: 0.02        # 2% account risk per trade
+  trail_stop_atr_mult: 1.5
+  max_concurrent_positions: 10
+  reentry_cooldown_bars: 5
+  earnings_blackout_bars: 3

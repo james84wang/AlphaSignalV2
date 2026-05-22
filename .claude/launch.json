@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "/Users/jameswang/Documents/Claude/Code/AlphaSignalV2/.venv/bin/uvicorn",
+      "runtimeArgs": ["backend.app.main:app", "--reload", "--port", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "frontend/node_modules/.bin/vite",
+      "runtimeArgs": ["--port", "5173"],
+      "port": 5173
+    }
+  ]
+}

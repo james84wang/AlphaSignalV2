@@ -1,0 +1,13 @@
+data/
+.venv/
+node_modules/
+*.parquet
+.env
+.env.*
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+dist/
+.DS_Store
+*.egg-info/

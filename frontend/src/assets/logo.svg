@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 50" fill="none">
+  <!-- Placeholder logo — replace with your own asset -->
+  <rect width="200" height="50" rx="6" fill="#0f172a"/>
+  <polyline points="20,35 45,15 70,28 95,10 120,22" stroke="#22d3ee" stroke-width="3" stroke-linejoin="round" fill="none"/>
+  <text x="130" y="33" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="#f1f5f9">Alpha</text>
+  <text x="130" y="47" font-family="system-ui,sans-serif" font-size="10" fill="#94a3b8">SIGNAL</text>
+</svg>
