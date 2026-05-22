@@ -11,10 +11,11 @@
     "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.40.0",
+    "lightweight-charts": "^4.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@tanstack/react-query": "^5.40.0",
-    "lightweight-charts": "^4.2.0"
+    "react-router-dom": "^7.15.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",

@@ -203,6 +203,13 @@ class RiskConfig(BaseModel):
     earnings_blackout_bars: int
 
 
+class BacktestConfig(BaseModel):
+    start_years_back: int
+    initial_account: float
+    slippage_pct: float
+    commission_per_trade: float
+
+
 # ── Root model ─────────────────────────────────────────────────────────────────
 
 class AppConfig(BaseModel):
@@ -219,6 +226,7 @@ class AppConfig(BaseModel):
     rsi: RsiConfig
     universe: UniverseConfig
     risk: RiskConfig
+    backtest: BacktestConfig
 
     @property
     def weights_valid(self) -> bool:
@@ -227,6 +235,12 @@ class AppConfig(BaseModel):
 
 
 _config: AppConfig | None = None
+
+
+def reset_config() -> None:
+    """Clear the cached config so the next load_config() re-reads config.yaml."""
+    global _config
+    _config = None
 
 
 def load_config(path: Path | str | None = None) -> AppConfig:
