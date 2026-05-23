@@ -26,6 +26,10 @@ export interface SignalEntry {
   long_allowed: boolean;
   short_allowed: boolean;
   sub_scores: SubScores;
+  /** Populated on short-strategy runs; null when no inverse ETF is mapped */
+  inverse_etf?: string | null;
+  /** True when signal was emitted but no inverse ETF mapping exists */
+  no_inverse_etf?: boolean;
 }
 
 export interface SignalsResponse {
@@ -134,6 +138,7 @@ export interface ConfigResponse {
 
 export interface PutConfigResponse {
   ok: boolean;
+  strategy: string;
   weights: ConfigWeights;
   config_hash: string;
   version_saved_at: string;
@@ -149,6 +154,7 @@ export interface DailyRunResponse {
   n_success?: number;
   n_errors?: number;
   universe?: string;
+  strategy?: string;
   date?: string;
   error?: string;
 }
@@ -206,4 +212,68 @@ export interface BacktestResult {
   equity_curve?: Array<{ date: string; equity: number; n_open: number }>;
   trades?: TradeEntry[];
   survivorship_note?: string;
+}
+
+// ── Market Overview ──────────────────────────────────────────────────────────
+
+export interface IndexTile {
+  label: string;
+  symbol: string;
+  status: "ok" | "unavailable";
+  last?: number;
+  prev_close?: number;
+  change_pct?: number;
+}
+
+export interface FearAndGreed {
+  label: string;
+  source: string;
+  status: "ok" | "unavailable";
+  score?: number;
+  rating?: string;
+}
+
+export interface MarketOverviewResponse {
+  indices: Record<string, IndexTile>;
+  fear_and_greed: FearAndGreed;
+  cache_ttl_seconds: number;
+  note: string;
+}
+
+// ── Watchlist ────────────────────────────────────────────────────────────────
+
+export interface WatchlistEntry {
+  symbol: string;
+  added_at: string;
+  note: string | null;
+}
+
+export interface WatchlistResponse {
+  count: number;
+  symbols: WatchlistEntry[];
+}
+
+// ── Inverse ETFs ─────────────────────────────────────────────────────────────
+
+export interface InverseEtfEntry {
+  inverse_etf_symbol: string;
+  leverage: number;
+  note: string;
+}
+
+export interface InverseEtfMapResponse {
+  count: number;
+  map: Record<string, InverseEtfEntry>;
+}
+
+// ── Schedule ─────────────────────────────────────────────────────────────────
+
+export interface ScheduleStatus {
+  enabled: boolean;
+  time: string;
+  tz: string;
+  catchup_enabled: boolean;
+  last_run_date: string | null;
+  next_run: string | null;
+  note: string;
 }

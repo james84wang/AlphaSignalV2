@@ -1,24 +1,11 @@
-import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchSignals, postDailyRun, fetchDailyRun } from "../lib/api";
 import logo from "../assets/logo.jpeg";
 
 interface Props {
   children: React.ReactNode;
-  universe: string;
-  onUniverseChange: (u: string) => void;
 }
 
-function NavItem({
-  to,
-  label,
-  icon,
-}: {
-  to: string;
-  label: string;
-  icon: React.ReactNode;
-}) {
+function NavItem({ to, label, icon }: { to: string; label: string; icon: React.ReactNode }) {
   return (
     <NavLink
       to={to}
@@ -37,57 +24,13 @@ function NavItem({
   );
 }
 
-export function Layout({ children, universe, onUniverseChange }: Props) {
+export function Layout({ children }: Props) {
   const navigate = useNavigate();
-  const qc = useQueryClient();
-  const [runJobId, setRunJobId] = useState<string | null>(null);
-  const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
-
-  const { data: signals } = useQuery({
-    queryKey: ["signals", universe],
-    queryFn: () => fetchSignals({ universe }),
-    retry: false,
-  });
-
-  const runMutation = useMutation({
-    mutationFn: () => postDailyRun({ universe }),
-    onSuccess: (data) => {
-      setRunJobId(data.job_id);
-      setRunStatus("running");
-      pollJob(data.job_id);
-    },
-    onError: () => setRunStatus("error"),
-  });
-
-  function pollJob(jobId: string) {
-    const interval = setInterval(async () => {
-      try {
-        const status = await fetchDailyRun(jobId);
-        if (status.status === "done") {
-          clearInterval(interval);
-          setRunStatus("done");
-          setRunJobId(null);
-          qc.invalidateQueries({ queryKey: ["signals"] });
-          setTimeout(() => setRunStatus("idle"), 3000);
-        } else if (status.status === "error") {
-          clearInterval(interval);
-          setRunStatus("error");
-          setTimeout(() => setRunStatus("idle"), 4000);
-        }
-      } catch {
-        clearInterval(interval);
-        setRunStatus("error");
-        setTimeout(() => setRunStatus("idle"), 4000);
-      }
-    }, 1500);
-  }
-
-  const watchlist = signals?.signals.slice(0, 20) ?? [];
 
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-52 flex-shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col">
+      <aside className="w-48 flex-shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col">
         {/* Logo */}
         <div className="p-4 border-b border-slate-800">
           <button
@@ -100,7 +43,7 @@ export function Layout({ children, universe, onUniverseChange }: Props) {
         </div>
 
         {/* Nav */}
-        <nav className="p-3 space-y-1 border-b border-slate-800">
+        <nav className="p-3 space-y-1">
           <NavItem
             to="/"
             label="Dashboard"
@@ -130,90 +73,13 @@ export function Layout({ children, universe, onUniverseChange }: Props) {
             }
           />
         </nav>
-
-        {/* Universe selector */}
-        <div className="p-3 border-b border-slate-800">
-          <p className="text-xs text-slate-500 uppercase font-medium mb-2 px-1">Universe</p>
-          <div className="flex gap-1">
-            {(["watchlist", "sp500"] as const).map((u) => (
-              <button
-                key={u}
-                onClick={() => onUniverseChange(u)}
-                className={`flex-1 py-1 text-xs rounded font-medium transition-colors ${
-                  universe === u
-                    ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
-                    : "text-slate-400 hover:text-slate-300 border border-transparent hover:border-slate-600"
-                }`}
-              >
-                {u === "watchlist" ? "Watchlist" : "S&P 500"}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Run signals button */}
-        <div className="p-3 border-b border-slate-800">
-          <button
-            onClick={() => runMutation.mutate()}
-            disabled={runStatus === "running"}
-            className={`w-full py-1.5 text-xs rounded-lg font-semibold transition-all ${
-              runStatus === "running"
-                ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 cursor-wait"
-                : runStatus === "done"
-                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                : runStatus === "error"
-                ? "bg-red-500/20 text-red-300 border border-red-500/40"
-                : "bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25"
-            }`}
-          >
-            {runStatus === "running"
-              ? "Running…"
-              : runStatus === "done"
-              ? "Done!"
-              : runStatus === "error"
-              ? "Error"
-              : "Run Signals"}
-          </button>
-        </div>
-
-        {/* Watchlist */}
-        <div className="flex-1 overflow-y-auto">
-          {watchlist.length > 0 && (
-            <div className="p-3">
-              <p className="text-xs text-slate-500 uppercase font-medium mb-2 px-1">
-                Watchlist
-              </p>
-              <div className="space-y-0.5">
-                {watchlist.map((s) => (
-                  <button
-                    key={s.symbol}
-                    onClick={() => navigate(`/symbol/${s.symbol}`)}
-                    className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-800 transition-colors group"
-                  >
-                    <span className="text-sm font-medium text-slate-300 group-hover:text-slate-100">
-                      {s.symbol}
-                    </span>
-                    <span
-                      className={`text-xs font-semibold ${
-                        s.composite >= 0 ? "text-green-400" : "text-red-400"
-                      }`}
-                    >
-                      {s.composite >= 0 ? "+" : ""}
-                      {s.composite.toFixed(0)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
       </aside>
 
       {/* Main content */}
       <main className="flex-1 overflow-y-auto flex flex-col">
         {children}
 
-        {/* Footer with TradingView attribution */}
+        {/* Footer — keep TradingView attribution */}
         <footer className="mt-auto px-6 py-3 border-t border-slate-800 text-xs text-slate-600 flex items-center justify-between flex-shrink-0">
           <span>AlphaSignal — personal use only</span>
           <a

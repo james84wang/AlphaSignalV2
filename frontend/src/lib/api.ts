@@ -9,6 +9,11 @@ import type {
   DailyRunResponse,
   BacktestJobResponse,
   BacktestResult,
+  MarketOverviewResponse,
+  WatchlistResponse,
+  WatchlistEntry,
+  InverseEtfMapResponse,
+  ScheduleStatus,
 } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
@@ -52,9 +57,22 @@ async function put<T>(path: string, body: unknown): Promise<T> {
   return res.json();
 }
 
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch(BASE + path, { method: "DELETE" });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+// ── Health ───────────────────────────────────────────────────────────────────
+
 export function fetchHealth() {
   return get<HealthResponse>("/health");
 }
+
+// ── Signals ──────────────────────────────────────────────────────────────────
 
 export function fetchSignals(params?: { date?: string; universe?: string }) {
   const p: Record<string, string> = {};
@@ -62,6 +80,8 @@ export function fetchSignals(params?: { date?: string; universe?: string }) {
   if (params?.universe) p.universe = params.universe;
   return get<SignalsResponse>("/api/signals", p);
 }
+
+// ── Symbol detail ────────────────────────────────────────────────────────────
 
 export function fetchBars(symbol: string, range = "1y") {
   return get<BarsResponse>(`/api/symbols/${symbol}/bars`, { range });
@@ -73,17 +93,36 @@ export function fetchSignalAudit(symbol: string, date?: string) {
   return get<SignalAudit>(`/api/symbols/${symbol}/signal`, p);
 }
 
+// ── Config (per-strategy) ────────────────────────────────────────────────────
+
+export function fetchConfigStrategy(strategy: "long" | "short") {
+  return get<ConfigResponse>(`/api/config/${strategy}`);
+}
+
+export function putConfigStrategy(strategy: "long" | "short", weights: ConfigWeights) {
+  return put<PutConfigResponse>(`/api/config/${strategy}`, weights);
+}
+
+/** @deprecated Use fetchConfigStrategy("long") */
 export function fetchConfig() {
-  return get<ConfigResponse>("/api/config");
+  return fetchConfigStrategy("long");
 }
 
+/** @deprecated Use putConfigStrategy */
 export function putWeights(weights: ConfigWeights) {
-  return put<PutConfigResponse>("/api/config", weights);
+  return putConfigStrategy("long", weights);
 }
 
-export function postDailyRun(params?: { universe?: string; date?: string }) {
+// ── Daily runs ───────────────────────────────────────────────────────────────
+
+export function postDailyRun(params?: {
+  universe?: string;
+  strategy?: "long" | "short";
+  date?: string;
+}) {
   return post<DailyRunResponse>("/api/runs/daily", {
-    universe: params?.universe ?? "watchlist",
+    universe: params?.universe ?? "combined",
+    strategy: params?.strategy ?? "long",
     ...(params?.date ? { date: params.date } : {}),
   });
 }
@@ -91,6 +130,8 @@ export function postDailyRun(params?: { universe?: string; date?: string }) {
 export function fetchDailyRun(jobId: string) {
   return get<DailyRunResponse>(`/api/runs/daily/${jobId}`);
 }
+
+// ── Backtest ─────────────────────────────────────────────────────────────────
 
 export function postBacktest(params: {
   universe?: string;
@@ -100,10 +141,49 @@ export function postBacktest(params: {
   initial_account?: number;
   slippage_pct?: number;
   commission?: number;
+  strategy?: string;
 }) {
   return post<BacktestJobResponse>("/api/backtest", params);
 }
 
 export function fetchBacktest(jobId: string) {
   return get<BacktestResult>(`/api/backtest/${jobId}`);
+}
+
+// ── Market overview ──────────────────────────────────────────────────────────
+
+export function fetchMarketOverview(refresh = false) {
+  const p: Record<string, string> = {};
+  if (refresh) p.refresh = "true";
+  return get<MarketOverviewResponse>("/api/market/overview", p);
+}
+
+// ── Watchlist ────────────────────────────────────────────────────────────────
+
+export function fetchWatchlist() {
+  return get<WatchlistResponse>("/api/watchlist");
+}
+
+export function addToWatchlist(symbol: string, note?: string) {
+  return post<WatchlistEntry>("/api/watchlist", { symbol, note: note ?? null });
+}
+
+export function removeFromWatchlist(symbol: string) {
+  return del<{ ok: boolean; symbol: string }>(`/api/watchlist/${symbol}`);
+}
+
+// ── Inverse ETFs ─────────────────────────────────────────────────────────────
+
+export function fetchInverseEtfs() {
+  return get<InverseEtfMapResponse>("/api/inverse-etfs");
+}
+
+// ── Schedule ─────────────────────────────────────────────────────────────────
+
+export function fetchSchedule() {
+  return get<ScheduleStatus>("/api/schedule");
+}
+
+export function putSchedule(enabled: boolean) {
+  return put<ScheduleStatus>("/api/schedule", { enabled });
 }

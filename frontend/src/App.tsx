@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Routes, Route } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { Dashboard } from "./pages/Dashboard";
@@ -7,12 +6,10 @@ import { Settings } from "./pages/Settings";
 import { Backtest } from "./pages/Backtest";
 
 export default function App() {
-  const [universe, setUniverse] = useState("watchlist");
-
   return (
-    <Layout universe={universe} onUniverseChange={setUniverse}>
+    <Layout>
       <Routes>
-        <Route path="/" element={<Dashboard universe={universe} />} />
+        <Route path="/" element={<Dashboard />} />
         <Route path="/symbol/:symbol" element={<SymbolView />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/backtest" element={<Backtest />} />
