@@ -6,6 +6,7 @@ import type {
   ConfigResponse,
   PutConfigResponse,
   ConfigWeights,
+  ProfileUpdate,
   DailyRunResponse,
   BacktestJobResponse,
   BacktestResult,
@@ -99,8 +100,8 @@ export function fetchConfigStrategy(strategy: "long" | "short") {
   return get<ConfigResponse>(`/api/config/${strategy}`);
 }
 
-export function putConfigStrategy(strategy: "long" | "short", weights: ConfigWeights) {
-  return put<PutConfigResponse>(`/api/config/${strategy}`, weights);
+export function putConfigStrategy(strategy: "long" | "short", payload: ProfileUpdate) {
+  return put<PutConfigResponse>(`/api/config/${strategy}`, payload);
 }
 
 /** @deprecated Use fetchConfigStrategy("long") */
@@ -110,7 +111,7 @@ export function fetchConfig() {
 
 /** @deprecated Use putConfigStrategy */
 export function putWeights(weights: ConfigWeights) {
-  return putConfigStrategy("long", weights);
+  return putConfigStrategy("long", { weights });
 }
 
 // ── Daily runs ───────────────────────────────────────────────────────────────

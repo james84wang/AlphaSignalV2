@@ -136,10 +136,29 @@ export interface ConfigResponse {
   [key: string]: unknown;
 }
 
+export interface ScoringTablesUpdate {
+  candlestick?: Record<string, number>;
+  p3?: Record<string, number>;
+  p5?: Record<string, number>;
+  ema_stacking?: Record<string, number>;
+  ema_cross?: Record<string, number>;
+  sr?: Record<string, number>;
+  macd?: Record<string, number>;
+  rsi?: Record<string, number>;
+}
+
+export interface ProfileUpdate {
+  weights: ConfigWeights;
+  thresholds?: ConfigThresholds;
+  scoring_tables?: ScoringTablesUpdate;
+}
+
 export interface PutConfigResponse {
   ok: boolean;
   strategy: string;
   weights: ConfigWeights;
+  thresholds_updated: boolean;
+  scoring_tables_updated: boolean;
   config_hash: string;
   version_saved_at: string;
 }
