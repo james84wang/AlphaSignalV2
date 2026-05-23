@@ -434,6 +434,52 @@ powershell -ExecutionPolicy Bypass -File scripts\launch.ps1 -Rebuild
 
 ---
 
+## Market Overview & Built-in Scheduler (Phase 5 / mod-c)
+
+### Market Sentiment Header
+
+The backend exposes a live market sentiment endpoint:
+
+```
+GET http://localhost:8000/api/market/overview
+```
+
+It returns the latest level and daily % change for:
+- S&P 500 (`^GSPC`), NASDAQ Composite (`^IXIC`), NASDAQ 100 (`^NDX`)
+- VIX (`^VIX`), Tech Sector ETF (`XLK`)
+- S&P MidCap 400 (`^SP400`) and S&P SmallCap 600 (`^SP600`) — shown separately because no free single-ticker feed exists for the combined "S&P 1000"
+- CNN Fear & Greed Index (0–100 + label)
+
+Data is cached for 15 minutes. Individual tiles show `"status": "unavailable"` if a feed is temporarily down — this never crashes the dashboard.
+
+### Daily Scheduler
+
+The backend includes an **APScheduler** that fires at **08:00 America/New_York** (Mon–Fri) and runs both the LONG and SHORT strategies over the combined universe. Results land in SQLite exactly like a manual run.
+
+**Important caveat:** This only fires when your Mac is awake and the backend is running.
+At 08:00 ET this is approximately:
+- **~22:00 AEST** (UTC+10, when US is on EST — roughly Nov–Mar)
+- **~23:00 AEDT** (UTC+11, when US is on EDT — roughly Mar–Nov)
+
+If your laptop is closed at that time, the **catch-up** logic runs the job once on the next backend startup, as long as today's job hasn't already completed.
+
+#### Enable / disable the scheduler
+
+```bash
+# Check status
+curl http://localhost:8000/api/schedule
+
+# Turn on
+curl -X PUT http://localhost:8000/api/schedule -H "Content-Type: application/json" -d '{"enabled": true}'
+
+# Turn off
+curl -X PUT http://localhost:8000/api/schedule -H "Content-Type: application/json" -d '{"enabled": false}'
+```
+
+The `enabled` flag is persisted to `data/schedule_settings.json` and survives backend restarts.
+
+---
+
 ## Scheduled Daily Run (Phase 7)
 
 US market closes at **4:00 PM ET**. In your timezone (AEST/AEDT), that is:

@@ -553,3 +553,78 @@ Comparing `pnl` vs `synthetic_pnl` shows the inverse-ETF decay drag.
 ```
 
 **Response 404** — unknown job_id.
+
+---
+
+## GET /api/market/overview
+
+Return the latest level and daily % change for major indices/ETFs plus the CNN Fear & Greed Index.
+Data is cached for ~15 minutes. Individual tiles may return `status: "unavailable"` if the feed
+is temporarily down — this never causes a 500 error.
+
+**Query parameters**
+
+| Param     | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refresh` | bool | `false` | Force a cache bypass and re-fetch all data |
+
+**Response 200**
+```json
+{
+  "indices": {
+    "sp500":    { "label": "S&P 500",          "symbol": "^GSPC",  "status": "ok", "last": 5473.47, "prev_close": 5445.72, "change_pct": 0.50 },
+    "nasdaq":   { "label": "NASDAQ Composite",  "symbol": "^IXIC",  "status": "ok", "last": 17543.97, "prev_close": 17493.10, "change_pct": 0.29 },
+    "ndx100":   { "label": "NASDAQ 100",        "symbol": "^NDX",   "status": "ok", "last": 19481.64, "prev_close": 19357.27, "change_pct": 0.64 },
+    "vix":      { "label": "VIX",               "symbol": "^VIX",   "status": "ok", "last": 16.70,   "prev_close": 16.76,    "change_pct": -0.36 },
+    "xlk":      { "label": "Tech Sector (XLK)", "symbol": "XLK",    "status": "ok", "last": 180.39,  "prev_close": 179.22,   "change_pct": 0.65 },
+    "midcap":   { "label": "S&P MidCap 400",   "symbol": "^SP400", "status": "ok", "last": 3073.41, "prev_close": 3042.86,  "change_pct": 1.00 },
+    "smallcap": { "label": "S&P SmallCap 600", "symbol": "^SP600", "status": "ok", "last": 1370.72, "prev_close": 1356.96,  "change_pct": 1.01 }
+  },
+  "fear_and_greed": {
+    "label": "CNN Fear & Greed Index",
+    "source": "production.dataviz.cnn.io",
+    "status": "ok",
+    "score": 58.6,
+    "rating": "Greed"
+  },
+  "cache_ttl_seconds": 900,
+  "note": "S&P MidCap 400 (^SP400) and S&P SmallCap 600 (^SP600) are shown separately — no single free-feed ticker exists for the combined S&P 1000."
+}
+```
+
+If a feed is down, its tile contains `"status": "unavailable"` with no `last`/`change_pct` fields.
+
+---
+
+## GET /api/schedule
+
+Return the current scheduler configuration and status.
+
+**Response 200**
+```json
+{
+  "enabled": false,
+  "time": "08:00",
+  "tz": "America/New_York",
+  "catchup_enabled": true,
+  "last_run_date": "2025-01-15",
+  "next_run": "2025-01-16T13:00:00+00:00",
+  "note": "This run only fires when your Mac is awake and the backend is running (~23:00 AEST in summer / ~22:00 AEST in winter). If the machine is asleep, the catch-up logic will run once on the next backend start if today's run hasn't happened yet and catchup_enabled=true."
+}
+```
+
+`next_run` is `null` when the scheduler is paused/disabled or the backend has just started.
+`last_run_date` is `null` if no scheduled run has ever completed.
+
+---
+
+## PUT /api/schedule
+
+Enable or disable the daily scheduler. The setting persists across backend restarts.
+
+**Request body**
+```json
+{ "enabled": true }
+```
+
+**Response 200** — same shape as GET /api/schedule, reflecting the updated state.

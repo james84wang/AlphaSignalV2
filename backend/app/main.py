@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +23,9 @@ from backend.app.api.runs import router as runs_router
 from backend.app.api.backtest import router as backtest_router
 from backend.app.api.watchlist import router as watchlist_router
 from backend.app.api.inverse_etfs_routes import router as inverse_etfs_router
+from backend.app.api.market import router as market_router
+from backend.app.api.schedule import router as schedule_router
+from backend.app.scheduler import init_scheduler, shutdown_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +36,18 @@ _DATA_DIR = _REPO_ROOT.parent / "data"
 _DB_PATH = _DATA_DIR / "signals.db"
 _WATCHLIST_CSV = _REPO_ROOT / "data" / "watchlist.csv"
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):  # noqa: ARG001
+    init_scheduler()
+    yield
+    shutdown_scheduler()
+
+
 app = FastAPI(
     title="AlphaSignal",
     version="0.1.0",
     description="Personal US equity scoring engine — strategy signals, config, and backtests.",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -87,6 +99,8 @@ app.include_router(runs_router)
 app.include_router(backtest_router)
 app.include_router(watchlist_router)
 app.include_router(inverse_etfs_router)
+app.include_router(market_router)
+app.include_router(schedule_router)
 
 
 @app.get("/health", tags=["meta"])
