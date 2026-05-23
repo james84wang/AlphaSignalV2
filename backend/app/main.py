@@ -123,10 +123,14 @@ if _DIST.is_dir():
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str) -> FileResponse:
         """Serve static files or fall back to index.html for SPA routing."""
+        # Never serve HTML for /api/* — return a clear JSON 404 instead.
+        if full_path.startswith("api/") or full_path == "api":
+            raise HTTPException(status_code=404, detail=f"API route not found: /{full_path}")
         candidate = _DIST / full_path
         if candidate.is_file():
             return FileResponse(candidate)
         index = _DIST / "index.html"
         if not index.is_file():
             raise HTTPException(status_code=404, detail="Frontend not built")
-        return FileResponse(index)
+        # no-cache so browsers always fetch fresh HTML and pick up new JS bundle hashes
+        return FileResponse(index, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
