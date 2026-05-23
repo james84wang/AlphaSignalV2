@@ -1,0 +1,5 @@
+underlying_symbol,inverse_etf_symbol,leverage,note
+SPY,SH,-1,ProShares Short S&P500
+QQQ,PSQ,-1,ProShares Short QQQ
+DIA,DOG,-1,ProShares Short Dow30
+IWM,RWM,-1,ProShares Short Russell 2000

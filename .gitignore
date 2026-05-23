@@ -1,4 +1,6 @@
-data/
+/data/*
+!/data/watchlist.csv
+!/data/inverse_etfs.csv
 .venv/
 node_modules/
 *.parquet

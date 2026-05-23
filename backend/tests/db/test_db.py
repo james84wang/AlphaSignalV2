@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import inspect, select
 
-from backend.app.db.models import Run, Signal, config_hash, init_db, make_session_factory
+from backend.app.db.models import Run, Signal, WatchlistEntry, config_hash, init_db, make_session_factory, migrate_db, get_engine
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
@@ -142,6 +142,106 @@ def test_multiple_signals_ordering(tmp_db: Path) -> None:
 
 
 # ── config_hash ────────────────────────────────────────────────────────────────
+
+def test_init_db_creates_watchlist_table(tmp_db: Path) -> None:
+    engine = init_db(tmp_db)
+    insp = inspect(engine)
+    assert "watchlist" in insp.get_table_names()
+
+
+def test_watchlist_entry_insert_and_query(tmp_db: Path) -> None:
+    factory = make_session_factory(tmp_db)
+    with factory() as session:
+        entry = WatchlistEntry(symbol="AAPL", added_at="2026-01-01T00:00:00+00:00", note="test")
+        session.add(entry)
+        session.commit()
+
+    with factory() as session:
+        results = session.execute(select(WatchlistEntry)).scalars().all()
+        assert len(results) == 1
+        assert results[0].symbol == "AAPL"
+        assert results[0].note == "test"
+
+
+def test_watchlist_entry_unique_symbol(tmp_db: Path) -> None:
+    """Inserting a duplicate symbol should raise an integrity error."""
+    from sqlalchemy.exc import IntegrityError
+    factory = make_session_factory(tmp_db)
+    with pytest.raises(IntegrityError):
+        with factory() as session:
+            session.add(WatchlistEntry(symbol="MSFT", added_at="2026-01-01T00:00:00+00:00"))
+            session.add(WatchlistEntry(symbol="MSFT", added_at="2026-01-01T00:00:00+00:00"))
+            session.commit()
+
+
+def test_migrate_db_adds_missing_columns(tmp_db: Path) -> None:
+    """migrate_db should add inverse_etf and strategy columns if missing."""
+    from sqlalchemy import text
+    engine = get_engine(tmp_db)
+    # Simulate a pre-migration DB with bare minimal columns.
+    with engine.connect() as conn:
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS signals ("
+            "id INTEGER PRIMARY KEY, run_id INTEGER, date TEXT, symbol TEXT, "
+            "composite REAL, signal TEXT, "
+            "long_allowed INTEGER, short_allowed INTEGER, sub_scores_json TEXT"
+            ")"
+        ))
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS runs ("
+            "id INTEGER PRIMARY KEY, run_timestamp TEXT, universe TEXT, "
+            "config_hash TEXT, n_symbols INTEGER, n_success INTEGER, "
+            "n_errors INTEGER, duration_seconds REAL"
+            ")"
+        ))
+        conn.commit()
+
+    migrate_db(engine)
+
+    insp = inspect(engine)
+    sig_cols = {c["name"] for c in insp.get_columns("signals")}
+    assert "inverse_etf" in sig_cols
+    assert "strategy" in sig_cols
+
+    run_cols = {c["name"] for c in insp.get_columns("runs")}
+    assert "strategy" in run_cols
+
+
+def test_migrate_db_idempotent(tmp_db: Path) -> None:
+    """Running migrate_db twice must not raise."""
+    engine = init_db(tmp_db)
+    migrate_db(engine)
+    migrate_db(engine)
+
+
+def test_signal_stores_inverse_etf(tmp_db: Path) -> None:
+    """A Signal row can store an inverse_etf value."""
+    factory = make_session_factory(tmp_db)
+    migrate_db(get_engine(tmp_db))
+    with factory() as session:
+        run = Run(
+            run_timestamp=datetime.utcnow().isoformat(),
+            universe="combined",
+            strategy="short",
+            config_hash="abc123def456abcd",
+            n_symbols=1, n_success=1, n_errors=0, duration_seconds=1.0,
+        )
+        session.add(run)
+        session.flush()
+        sig = Signal(
+            run_id=run.id, date="2026-01-01", symbol="SPY",
+            strategy="short", composite=-80.0, signal="Strong Sell",
+            long_allowed=False, short_allowed=True,
+            sub_scores_json=json.dumps({}), inverse_etf="SH",
+        )
+        session.add(sig)
+        session.commit()
+        run_id = run.id
+
+    with factory() as session:
+        s = session.execute(select(Signal).where(Signal.run_id == run_id)).scalar_one()
+        assert s.inverse_etf == "SH"
+
 
 def test_config_hash_is_deterministic(tmp_path: Path) -> None:
     cfg = tmp_path / "config.yaml"

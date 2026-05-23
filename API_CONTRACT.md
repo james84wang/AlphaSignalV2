@@ -31,7 +31,7 @@ Return a ranked signal table from the most recent daily run matching the filters
 | Param     | Type   | Default      | Description |
 |-----------|--------|--------------|-------------|
 | `date`    | string | latest avail | `YYYY-MM-DD` — filter to runs whose signals cover this date |
-| `universe`| string | `watchlist`  | `watchlist` or `sp500` |
+| `universe`| string | `watchlist`  | `watchlist`, `sp500`, or `combined` |
 
 **Response 200**
 ```json
@@ -237,6 +237,79 @@ All 8 fields are required. Values must be non-negative and sum to exactly 100.
 
 ---
 
+## GET /api/watchlist
+
+Return the current watchlist (stored in SQLite, seeded once from `data/watchlist.csv`).
+
+**Response 200**
+```json
+{
+  "count": 3,
+  "symbols": [
+    { "symbol": "AAPL", "added_at": "2025-01-15T18:00:00+00:00", "note": null },
+    { "symbol": "MSFT", "added_at": "2025-01-15T18:00:00+00:00", "note": "AI play" }
+  ]
+}
+```
+
+---
+
+## POST /api/watchlist
+
+Add a symbol to the watchlist.
+
+**Request body**
+```json
+{ "symbol": "NVDA", "note": "optional free text" }
+```
+
+`symbol` is validated (1–10 uppercase alphanumeric chars). `note` is optional.
+
+**Response 201**
+```json
+{ "symbol": "NVDA", "added_at": "2025-01-15T18:30:00+00:00", "note": null }
+```
+
+**Response 409** — symbol already in watchlist.
+**Response 422** — invalid symbol format.
+
+---
+
+## DELETE /api/watchlist/{symbol}
+
+Remove a symbol from the watchlist.
+
+**Response 200**
+```json
+{ "ok": true, "symbol": "NVDA" }
+```
+
+**Response 404** — symbol not in watchlist.
+
+---
+
+## GET /api/inverse-etfs
+
+Return the current inverse-ETF map (loaded from `data/inverse_etfs.csv`).
+
+**Response 200**
+```json
+{
+  "count": 4,
+  "map": {
+    "SPY": { "inverse_etf_symbol": "SH", "leverage": -1, "note": "ProShares Short S&P500" },
+    "QQQ": { "inverse_etf_symbol": "PSQ", "leverage": -1, "note": "ProShares Short QQQ" },
+    "DIA": { "inverse_etf_symbol": "DOG", "leverage": -1, "note": "ProShares Short Dow30" },
+    "IWM": { "inverse_etf_symbol": "RWM", "leverage": -1, "note": "ProShares Short Russell 2000" }
+  }
+}
+```
+
+To add single-stock inverse ETFs, edit `data/inverse_etfs.csv` directly
+(columns: `underlying_symbol,inverse_etf_symbol,leverage,note`).
+
+---
+
 ## POST /api/runs/daily
 
 Trigger a daily signal run in the background.
@@ -244,20 +317,26 @@ Trigger a daily signal run in the background.
 **Request body**
 ```json
 {
-  "universe": "watchlist",
+  "universe": "combined",
   "strategy": "long",
   "date": "2025-01-15"
 }
 ```
 
-`universe` defaults to `"watchlist"`. `strategy` defaults to `"long"` (`"long"` or `"short"`). `date` defaults to today.
+`universe` defaults to `"combined"`. Valid values: `"watchlist"`, `"sp500"`, `"combined"`.
+`"combined"` = S&P 500 ∪ S&P 1000 (MidCap 400 + SmallCap 600) ∪ watchlist, de-duplicated.
+`strategy` defaults to `"long"` (`"long"` or `"short"`). `date` defaults to today.
+
+Short-strategy signals include an `inverse_etf` field on each signal row: the mapped
+inverse-ETF symbol if one exists in `data/inverse_etfs.csv`, otherwise `null` (signal
+is still emitted; `no_inverse_etf` flag is set to `true`).
 
 **Response 202**
 ```json
 {
   "job_id": "a3f2bc19",
   "status": "running",
-  "message": "Daily run started for universe=watchlist date=2025-01-15"
+  "message": "Daily run started for universe=combined strategy=long date=2025-01-15"
 }
 ```
 
@@ -286,7 +365,8 @@ Poll the status of a daily run job.
   "run_id": 8,
   "n_success": 12,
   "n_errors": 0,
-  "universe": "watchlist",
+  "universe": "combined",
+  "strategy": "long",
   "date": "2025-01-15"
 }
 ```

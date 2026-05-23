@@ -292,7 +292,7 @@ strategies:
         above_70_falling: -40
         crosses_down_70: -70
 universe:
-  default: US large/mid-cap top 500 by liquidity
+  default: combined        # sp500 ∪ sp1000 ∪ watchlist (de-duplicated)
   timeframe: daily
   watchlist_file: data/watchlist.csv
 risk:

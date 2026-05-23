@@ -1,4 +1,8 @@
 """AlphaSignal FastAPI entry point."""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -8,16 +12,25 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.app.config import load_config
 from backend.app.db.backtest_models import init_backtest_db
-from backend.app.db.models import init_db
+from backend.app.db.models import WatchlistEntry, get_engine, init_db, migrate_db, make_session_factory
+from sqlalchemy import select
 
 from backend.app.api.signals import router as signals_router
 from backend.app.api.symbols import router as symbols_router
 from backend.app.api.config_routes import router as config_router
 from backend.app.api.runs import router as runs_router
 from backend.app.api.backtest import router as backtest_router
+from backend.app.api.watchlist import router as watchlist_router
+from backend.app.api.inverse_etfs_routes import router as inverse_etfs_router
+
+logger = logging.getLogger(__name__)
 
 # frontend/dist/ is at repo_root/frontend/dist; main.py is at repo_root/backend/app/main.py
 _DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DATA_DIR = _REPO_ROOT.parent / "data"
+_DB_PATH = _DATA_DIR / "signals.db"
+_WATCHLIST_CSV = _REPO_ROOT / "data" / "watchlist.csv"
 
 app = FastAPI(
     title="AlphaSignal",
@@ -27,23 +40,53 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    # Allow Vite dev server in development; in production the frontend is
-    # served from the same origin so CORS isn't needed, but keeping the
-    # dev origins here is harmless.
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Ensure SQLite tables exist at startup.
-init_db()
+
+def _seed_watchlist_from_csv() -> None:
+    """If the watchlist table is empty, seed it from data/watchlist.csv."""
+    if not _WATCHLIST_CSV.exists():
+        return
+    try:
+        import pandas as pd
+        df = pd.read_csv(_WATCHLIST_CSV)
+        if "symbol" not in df.columns:
+            return
+        symbols = df["symbol"].str.strip().str.upper().dropna().tolist()
+        if not symbols:
+            return
+
+        factory = make_session_factory(_DB_PATH)
+        with factory() as session:
+            existing_count = session.execute(select(WatchlistEntry)).scalars().first()
+            if existing_count is not None:
+                return  # already seeded
+
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            for sym in symbols:
+                session.add(WatchlistEntry(symbol=sym, added_at=now, note="seeded from watchlist.csv"))
+            session.commit()
+            logger.info("Seeded watchlist DB with %d symbols from watchlist.csv", len(symbols))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not seed watchlist from CSV: %s", exc)
+
+
+# Ensure SQLite tables exist and run schema migrations at startup.
+_engine = init_db(_DB_PATH)
+migrate_db(_engine)
 init_backtest_db()
+_seed_watchlist_from_csv()
 
 app.include_router(signals_router)
 app.include_router(symbols_router)
 app.include_router(config_router)
 app.include_router(runs_router)
 app.include_router(backtest_router)
+app.include_router(watchlist_router)
+app.include_router(inverse_etfs_router)
 
 
 @app.get("/health", tags=["meta"])
@@ -58,10 +101,7 @@ def health() -> dict:
 
 
 # ── SPA static-file serving (production build) ────────────────────────────────
-# Mounted AFTER all API routes so API paths always win.
-# Only active when `frontend/dist/` exists (i.e. after `npm run build`).
 if _DIST.is_dir():
-    # Serve hashed JS/CSS/image bundles from dist/assets/
     _assets = _DIST / "assets"
     if _assets.is_dir():
         app.mount("/assets", StaticFiles(directory=_assets), name="static-assets")

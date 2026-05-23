@@ -4,18 +4,21 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time as _time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from backend.app.api.jobs import create_job, fail_job, finish_job, get_job
 from backend.app.config import load_config
 from backend.app.data.cache import ParquetCache
-from backend.app.data.universe import Universe
+from backend.app.data.inverse_etfs import load_inverse_etf_map
+from backend.app.data.universe import Universe, fetch_sp1000_symbols, fetch_sp500_symbols
 from backend.app.data.yfinance_provider import YFinanceProvider
-from backend.app.db.models import Run, Signal, config_hash, make_session_factory
+from backend.app.db.models import Run, Signal, WatchlistEntry, config_hash, make_session_factory
 from backend.app.scoring.composite import run_engine
 
 logger = logging.getLogger(__name__)
@@ -28,9 +31,11 @@ _DB_PATH = _DATA_DIR / "signals.db"
 _WATCHLIST_PATH = _REPO_ROOT / "data" / "watchlist.csv"
 _HISTORY_DAYS = 400
 
+_VALID_UNIVERSES = ("watchlist", "sp500", "combined")
+
 
 class DailyRunRequest(BaseModel):
-    universe: str = "watchlist"
+    universe: str = "combined"
     strategy: str = "long"
     date: str | None = None
 
@@ -38,8 +43,8 @@ class DailyRunRequest(BaseModel):
 @router.post("/daily", status_code=202)
 def trigger_daily_run(body: DailyRunRequest) -> dict:
     """Trigger a background daily signal run."""
-    if body.universe not in ("watchlist", "sp500"):
-        raise HTTPException(422, detail="universe must be 'watchlist' or 'sp500'")
+    if body.universe not in _VALID_UNIVERSES:
+        raise HTTPException(422, detail=f"universe must be one of {_VALID_UNIVERSES}")
     if body.strategy not in ("long", "short"):
         raise HTTPException(422, detail="strategy must be 'long' or 'short'")
 
@@ -85,21 +90,57 @@ def get_daily_run_status(job_id: str) -> dict:
 
 # ── Background worker ──────────────────────────────────────────────────────────
 
+def _get_watchlist_symbols_from_db() -> list[str]:
+    """Load watchlist symbols from SQLite."""
+    try:
+        factory = make_session_factory(_DB_PATH)
+        with factory() as session:
+            entries = session.execute(select(WatchlistEntry)).scalars().all()
+            return [e.symbol for e in entries]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not load watchlist from DB: %s", exc)
+        return []
+
+
+def _resolve_symbols(universe_name: str) -> list[str]:
+    """Return the de-duplicated sorted list of symbols for the requested universe."""
+    if universe_name == "watchlist":
+        # Prefer DB watchlist; fall back to CSV if DB is empty.
+        db_syms = _get_watchlist_symbols_from_db()
+        if db_syms:
+            return sorted(set(db_syms))
+        u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
+        return u.watchlist_symbols()
+
+    if universe_name == "sp500":
+        sp500 = fetch_sp500_symbols()
+        wl_db = _get_watchlist_symbols_from_db()
+        return sorted(set(sp500) | set(wl_db))
+
+    # combined = sp500 ∪ sp1000 ∪ watchlist
+    sp500 = fetch_sp500_symbols()
+    sp1000 = fetch_sp1000_symbols()
+    wl_db = _get_watchlist_symbols_from_db()
+    # Fall back to CSV watchlist if DB is empty.
+    if not wl_db:
+        u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
+        wl_db = u.watchlist_symbols()
+    return sorted(set(sp500) | set(sp1000) | set(wl_db))
+
+
 def _run_daily_task(job_id: str, universe_name: str, strategy_name: str, target_date: date) -> None:
+    t0 = _time.monotonic()
     try:
         cfg = load_config(_CONFIG_PATH)
         cfg_hash = config_hash(_CONFIG_PATH)
 
-        if universe_name == "watchlist":
-            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
-            symbols = u.watchlist_symbols()
-        else:
-            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=True)
-            symbols = u.symbols
-
+        symbols = _resolve_symbols(universe_name)
         if not symbols:
             fail_job(job_id, "No symbols found in universe")
             return
+
+        # Load inverse-ETF map once for the whole run (used only for short strategy).
+        inverse_map = load_inverse_etf_map() if strategy_name == "short" else {}
 
         provider = YFinanceProvider()
         cache = ParquetCache(provider)
@@ -131,6 +172,13 @@ def _run_daily_task(job_id: str, universe_name: str, strategy_name: str, target_
                     name: round(comp["sub"], 4)
                     for name, comp in bar["components"].items()
                 }
+
+                # Attach inverse ETF for short runs.
+                inverse_etf: str | None = None
+                if strategy_name == "short":
+                    entry = inverse_map.get(symbol)
+                    inverse_etf = entry["inverse_etf_symbol"] if entry else None
+
                 successes.append({
                     "symbol": symbol,
                     "date": bar["date"],
@@ -139,14 +187,13 @@ def _run_daily_task(job_id: str, universe_name: str, strategy_name: str, target_
                     "long_allowed": bar["regime"]["long_allowed"],
                     "short_allowed": bar["regime"]["short_allowed"],
                     "sub_scores": sub_scores,
+                    "inverse_etf": inverse_etf,
                 })
             except Exception as exc:  # noqa: BLE001
                 logger.warning("[%s] daily run error: %s", symbol, exc)
                 errors.append(symbol)
 
         now = datetime.now(timezone.utc)
-        import time as _time
-        t0 = _time.monotonic()
 
         with session_factory() as session:
             run = Run(
@@ -157,7 +204,7 @@ def _run_daily_task(job_id: str, universe_name: str, strategy_name: str, target_
                 n_symbols=len(symbols),
                 n_success=len(successes),
                 n_errors=len(errors),
-                duration_seconds=round(_time.monotonic() - t0 + 0.001, 2),
+                duration_seconds=round(_time.monotonic() - t0, 2),
             )
             session.add(run)
             session.flush()
@@ -173,6 +220,7 @@ def _run_daily_task(job_id: str, universe_name: str, strategy_name: str, target_
                     long_allowed=s["long_allowed"],
                     short_allowed=s["short_allowed"],
                     sub_scores_json=json.dumps(s["sub_scores"]),
+                    inverse_etf=s["inverse_etf"],
                 ))
 
             session.commit()
@@ -183,6 +231,7 @@ def _run_daily_task(job_id: str, universe_name: str, strategy_name: str, target_
             "n_success": len(successes),
             "n_errors": len(errors),
             "universe": universe_name,
+            "strategy": strategy_name,
             "date": str(target_date),
         })
 

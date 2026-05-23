@@ -2,8 +2,9 @@
 
 Tables
 ------
-runs    — one row per run_daily.py invocation (metadata + stats)
-signals — one row per (run_id, date, symbol) with full audit data
+runs         — one row per run_daily.py invocation (metadata + stats)
+signals      — one row per (run_id, date, symbol) with full audit data
+watchlist    — user's symbol watchlist (managed via API)
 
 The database file lives alongside the Parquet cache at:
     <repo-root>/../data/signals.db
@@ -14,7 +15,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, create_engine
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 # Match the existing parents[4] convention so signals.db lands in the
@@ -28,16 +29,13 @@ class Base(DeclarativeBase):
 
 
 class Run(Base):
-    """One row per run_daily.py invocation.
-
-    Stores the config hash so you always know which weights produced a run.
-    """
+    """One row per run_daily.py invocation."""
 
     __tablename__ = "runs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     run_timestamp = Column(String, nullable=False)   # ISO 8601 UTC datetime
-    universe = Column(String, nullable=False)        # "watchlist" | "sp500"
+    universe = Column(String, nullable=False)        # "watchlist" | "sp500" | "combined"
     strategy = Column(String, nullable=False, server_default="long")  # "long" | "short"
     config_hash = Column(String, nullable=False)     # first 16 hex chars of SHA-256(config.yaml)
     n_symbols = Column(Integer, nullable=False)      # total symbols attempted
@@ -58,10 +56,8 @@ class Run(Base):
 class Signal(Base):
     """One row per (run_id, date, symbol).
 
-    sub_scores_json is a JSON object mapping component name → sub-score (float),
-    e.g. {"candlestick": 90.0, "rsi": 40.0, ...}
-
-    regime flags are stored as separate booleans for easy SQL filtering.
+    sub_scores_json is a JSON object mapping component name → sub-score (float).
+    inverse_etf is populated for short-strategy signals where a mapping exists.
     """
 
     __tablename__ = "signals"
@@ -76,6 +72,7 @@ class Signal(Base):
     long_allowed = Column(Boolean, nullable=False)   # regime gate: longs permitted?
     short_allowed = Column(Boolean, nullable=False)  # regime gate: shorts permitted?
     sub_scores_json = Column(String, nullable=False) # JSON: {component: sub_score, ...}
+    inverse_etf = Column(String, nullable=True)      # mapped inverse ETF symbol (short runs only); null if unmapped
 
     run = relationship("Run", back_populates="signals")
 
@@ -84,6 +81,23 @@ class Signal(Base):
             f"<Signal {self.symbol} {self.date} strategy={self.strategy!r} "
             f"{self.signal!r} composite={self.composite:.2f}>"
         )
+
+
+class WatchlistEntry(Base):
+    """User-managed watchlist stored in SQLite.
+
+    Seeded from data/watchlist.csv on first startup; managed via the API thereafter.
+    """
+
+    __tablename__ = "watchlist"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String, nullable=False, unique=True)
+    added_at = Column(String, nullable=False)  # ISO 8601 UTC datetime
+    note = Column(String, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<WatchlistEntry {self.symbol!r} added={self.added_at!r}>"
 
 
 # ── Engine / session helpers ───────────────────────────────────────────────────
@@ -105,6 +119,33 @@ def init_db(db_path: Path | str | None = None):
     return engine
 
 
+def migrate_db(engine) -> None:
+    """Apply any pending schema migrations (idempotent).
+
+    SQLite's create_all never adds columns to existing tables, so new
+    columns must be added here with ALTER TABLE … ADD COLUMN.
+    """
+    insp = inspect(engine)
+
+    # Migrations for the signals table.
+    if "signals" in insp.get_table_names():
+        existing = {col["name"] for col in insp.get_columns("signals")}
+        with engine.connect() as conn:
+            if "strategy" not in existing:
+                conn.execute(text("ALTER TABLE signals ADD COLUMN strategy TEXT NOT NULL DEFAULT 'long'"))
+            if "inverse_etf" not in existing:
+                conn.execute(text("ALTER TABLE signals ADD COLUMN inverse_etf TEXT"))
+            conn.commit()
+
+    # Migrations for the runs table.
+    if "runs" in insp.get_table_names():
+        existing = {col["name"] for col in insp.get_columns("runs")}
+        with engine.connect() as conn:
+            if "strategy" not in existing:
+                conn.execute(text("ALTER TABLE runs ADD COLUMN strategy TEXT NOT NULL DEFAULT 'long'"))
+            conn.commit()
+
+
 def make_session_factory(db_path: Path | str | None = None):
     """Init DB and return a sessionmaker bound to that engine."""
     engine = init_db(db_path)
@@ -114,9 +155,5 @@ def make_session_factory(db_path: Path | str | None = None):
 # ── Config hash ────────────────────────────────────────────────────────────────
 
 def config_hash(config_path: Path) -> str:
-    """Return first 16 hex chars of SHA-256(config.yaml) for reproducibility.
-
-    Storing this with every run makes it trivial to correlate signal tables
-    with the exact weights that produced them.
-    """
+    """Return first 16 hex chars of SHA-256(config.yaml) for reproducibility."""
     return hashlib.sha256(config_path.read_bytes()).hexdigest()[:16]
