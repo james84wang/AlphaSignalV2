@@ -16,7 +16,7 @@ from backend.app.api.jobs import create_job, fail_job, finish_job, get_job
 from backend.app.backtest.engine import run_backtest
 from backend.app.config import load_config
 from backend.app.data.cache import ParquetCache
-from backend.app.data.universe import Universe
+from backend.app.data.universe import Universe, fetch_sp400_symbols, fetch_sp600_symbols
 from backend.app.data.yfinance_provider import YFinanceProvider
 from backend.app.db.backtest_models import save_backtest_result
 from backend.app.db.models import config_hash
@@ -53,8 +53,8 @@ def start_backtest(body: BacktestRequest) -> dict:
         universe_name = None
     else:
         universe_name = body.universe or "watchlist"
-        if universe_name not in ("watchlist", "sp500", "combined"):
-            raise HTTPException(422, detail="universe must be 'watchlist', 'sp500', or 'combined'")
+        if universe_name not in ("watchlist", "sp500", "combined", "midcap", "smallcap"):
+            raise HTTPException(422, detail="universe must be 'watchlist', 'sp500', 'combined', 'midcap', or 'smallcap'")
 
     # Resolve dates.
     end_date = date.fromisoformat(body.end) if body.end else date.today()
@@ -129,7 +129,20 @@ def _run_backtest_task(
         elif universe_name == "watchlist":
             u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
             symbols = u.watchlist_symbols()
-        else:
+        elif universe_name == "midcap":
+            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
+            wl = u.watchlist_symbols()
+            sp400 = fetch_sp400_symbols()
+            symbols = sorted(set(sp400) | set(wl))
+        elif universe_name == "smallcap":
+            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
+            wl = u.watchlist_symbols()
+            sp600 = fetch_sp600_symbols()
+            symbols = sorted(set(sp600) | set(wl))
+        elif universe_name == "combined":
+            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=True, include_sp1000=True)
+            symbols = u.symbols
+        else:  # sp500
             u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=True)
             symbols = u.symbols
 

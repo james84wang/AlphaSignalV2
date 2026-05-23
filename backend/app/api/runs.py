@@ -16,7 +16,13 @@ from backend.app.api.jobs import create_job, fail_job, finish_job, get_job
 from backend.app.config import load_config
 from backend.app.data.cache import ParquetCache
 from backend.app.data.inverse_etfs import load_inverse_etf_map
-from backend.app.data.universe import Universe, fetch_sp1000_symbols, fetch_sp500_symbols
+from backend.app.data.universe import (
+    Universe,
+    fetch_sp400_symbols,
+    fetch_sp500_symbols,
+    fetch_sp600_symbols,
+    fetch_sp1000_symbols,
+)
 from backend.app.data.yfinance_provider import YFinanceProvider
 from backend.app.db.models import Run, Signal, WatchlistEntry, config_hash, make_session_factory
 from backend.app.scoring.composite import run_engine
@@ -31,7 +37,7 @@ _DB_PATH = _DATA_DIR / "signals.db"
 _WATCHLIST_PATH = _REPO_ROOT / "data" / "watchlist.csv"
 _HISTORY_DAYS = 400
 
-_VALID_UNIVERSES = ("watchlist", "sp500", "combined")
+_VALID_UNIVERSES = ("watchlist", "sp500", "combined", "midcap", "smallcap")
 
 
 class DailyRunRequest(BaseModel):
@@ -117,7 +123,23 @@ def _resolve_symbols(universe_name: str) -> list[str]:
         wl_db = _get_watchlist_symbols_from_db()
         return sorted(set(sp500) | set(wl_db))
 
-    # combined = sp500 ∪ sp1000 ∪ watchlist
+    if universe_name == "midcap":
+        sp400 = fetch_sp400_symbols()
+        wl_db = _get_watchlist_symbols_from_db()
+        if not wl_db:
+            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
+            wl_db = u.watchlist_symbols()
+        return sorted(set(sp400) | set(wl_db))
+
+    if universe_name == "smallcap":
+        sp600 = fetch_sp600_symbols()
+        wl_db = _get_watchlist_symbols_from_db()
+        if not wl_db:
+            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
+            wl_db = u.watchlist_symbols()
+        return sorted(set(sp600) | set(wl_db))
+
+    # combined = sp500 ∪ sp1000 ∪ watchlist  (sp1000 = sp400 + sp600)
     sp500 = fetch_sp500_symbols()
     sp1000 = fetch_sp1000_symbols()
     wl_db = _get_watchlist_symbols_from_db()

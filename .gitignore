@@ -11,5 +11,6 @@ __pycache__/
 *.pyo
 .pytest_cache/
 dist/
+backend/app/static/
 .DS_Store
 *.egg-info/

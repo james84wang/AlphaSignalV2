@@ -207,7 +207,10 @@ export function Backtest() {
               className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500"
             >
               <option value="watchlist">Watchlist</option>
-              <option value="sp500">S&P 500</option>
+              <option value="sp500">S&amp;P 500</option>
+              <option value="midcap">S&amp;P MidCap 400</option>
+              <option value="smallcap">S&amp;P SmallCap 600</option>
+              <option value="combined">Full Universe (Watchlist + S&amp;P 500/400/600)</option>
             </select>
           </div>
 

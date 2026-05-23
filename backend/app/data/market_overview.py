@@ -28,6 +28,8 @@ _CACHE_TTL = 900  # 15 minutes
 
 _TICKERS: list[dict[str, str]] = [
     {"key": "sp500",    "symbol": "^GSPC",  "label": "S&P 500"},
+    {"key": "dji",      "symbol": "^DJI",   "label": "Dow Jones"},
+    {"key": "nyse",     "symbol": "^NYA",   "label": "NYSE Composite"},
     {"key": "nasdaq",   "symbol": "^IXIC",  "label": "NASDAQ Composite"},
     {"key": "ndx100",   "symbol": "^NDX",   "label": "NASDAQ 100"},
     {"key": "vix",      "symbol": "^VIX",   "label": "VIX"},

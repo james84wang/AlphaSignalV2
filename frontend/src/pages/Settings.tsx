@@ -6,6 +6,7 @@ import { InverseEtfEditor } from "../components/InverseEtfEditor";
 import { ScheduleToggle } from "../components/ScheduleToggle";
 import { LoadingState } from "../components/LoadingState";
 import { ErrorState } from "../components/ErrorState";
+import { exportSettingsToExcel } from "../lib/exportSettings";
 import type { ConfigWeights, ConfigThresholds, ConfigResponse, ScoringTablesUpdate } from "../lib/types";
 
 type Strategy = "long" | "short";
@@ -378,6 +379,67 @@ function ProfileEditor({ strategy }: { strategy: Strategy }) {
   );
 }
 
+// ── Export button ─────────────────────────────────────────────────────────────
+
+function ExportButton() {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const { data: longCfg } = useQuery({
+    queryKey: ["config", "long"],
+    queryFn: () => fetchConfigStrategy("long"),
+  });
+  const { data: shortCfg } = useQuery({
+    queryKey: ["config", "short"],
+    queryFn: () => fetchConfigStrategy("short"),
+  });
+
+  async function handleExport() {
+    if (!longCfg || !shortCfg) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      exportSettingsToExcel(longCfg, shortCfg);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const ready = !!longCfg && !!shortCfg;
+
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        onClick={handleExport}
+        disabled={!ready || busy}
+        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold border transition-all ${
+          !ready
+            ? "border-slate-700 bg-slate-800/40 text-slate-500 cursor-not-allowed"
+            : busy
+            ? "border-amber-500/40 bg-amber-500/10 text-amber-300 cursor-wait"
+            : "border-slate-600 bg-slate-800 text-slate-200 hover:border-cyan-500 hover:text-cyan-300 hover:bg-slate-800/80"
+        }`}
+      >
+        {/* Download icon */}
+        <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+          <path
+            fillRule="evenodd"
+            d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+            clipRule="evenodd"
+          />
+        </svg>
+        {busy ? "Exporting…" : "Export Settings (.xlsx)"}
+      </button>
+      <span className="text-xs text-slate-500">
+        Downloads both Long &amp; Short profiles in one Excel workbook
+      </span>
+      {err && <span className="text-xs text-red-400">{err}</span>}
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export function Settings() {
@@ -385,12 +447,15 @@ export function Settings() {
 
   return (
     <div className="p-6 max-w-3xl space-y-10">
-      <div>
-        <h1 className="text-xl font-bold text-slate-100">Strategy Settings</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Two independent profiles — Long and Short. Edit weights, thresholds, and
-          scoring tables for each. Changes take effect on the next signal run.
-        </p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-xl font-bold text-slate-100">Strategy Settings</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Two independent profiles — Long and Short. Edit weights, thresholds, and
+            scoring tables for each. Changes take effect on the next signal run.
+          </p>
+        </div>
+        <ExportButton />
       </div>
 
       {/* Profile tabs */}

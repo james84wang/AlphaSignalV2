@@ -1,10 +1,10 @@
 strategies:
   long:
     thresholds:
-      strong_buy: 85
-      buy: 70
-      sell: -70
-      strong_sell: -85
+      strong_buy: 85.0
+      buy: 70.0
+      sell: -70.0
+      strong_sell: -85.0
     weights:
       candlestick: 12.0
       p3: 8.0
@@ -23,35 +23,35 @@ strategies:
       doji_body_pct: 0.05
       sr_context_multiplier: 1.2
       scores:
-        long_bullish_candle: 90
-        green_hammer: 80
-        inverted_green_hammer: 55
-        bullish_spinning_top: 25
-        bullish_doji: 20
-        bearish_doji: -20
-        bearish_spinning_top: -25
-        inverted_red_hammer: -80
-        red_hammer: -55
-        long_bearish_candle: -90
-        no_pattern: 0
+        long_bullish_candle: 90.0
+        green_hammer: 80.0
+        inverted_green_hammer: 55.0
+        bullish_spinning_top: 25.0
+        bullish_doji: 20.0
+        bearish_doji: -20.0
+        bearish_spinning_top: -25.0
+        inverted_red_hammer: -80.0
+        red_hammer: -55.0
+        long_bearish_candle: -90.0
+        no_pattern: 0.0
     p3:
       window: 3
       scores:
-        bullish_reversal_at_support: 70
-        bullish_breakout_above_resistance: 60
-        continuation_up: 30
-        no_pattern: 0
-        continuation_down: -30
-        bearish_breakdown_below_support: -60
-        bearish_reversal_at_resistance: -70
+        bullish_reversal_at_support: 70.0
+        bullish_breakout_above_resistance: 60.0
+        continuation_up: 30.0
+        no_pattern: 0.0
+        continuation_down: -30.0
+        bearish_breakdown_below_support: -60.0
+        bearish_reversal_at_resistance: -70.0
     p5:
       window: 5
       scores:
-        major_bullish_reversal: 85
-        bullish_trend_confirmation: 50
-        range_bound: 0
-        bearish_trend_confirmation: -50
-        major_bearish_reversal: -85
+        major_bullish_reversal: 85.0
+        bullish_trend_confirmation: 50.0
+        range_bound: 0.0
+        bearish_trend_confirmation: -50.0
+        major_bearish_reversal: -85.0
     volume:
       avg_period: 30
       bullish_buckets:
@@ -92,59 +92,59 @@ strategies:
       - 100
       - 200
       stacking_scores:
-        full_bull: 60
-        above_3: 30
-        above_2: 0
-        below_3: -30
-        full_bear: -60
+        full_bull: 60.0
+        above_3: 30.0
+        above_2: 0.0
+        below_3: -30.0
+        full_bear: -60.0
       cross_scores:
-        cross_above_200: 95
-        cross_above_100: 75
-        cross_above_50: 55
-        cross_above_20: 35
-        cross_below_20: -35
-        cross_below_50: -55
-        cross_below_100: -75
-        cross_below_200: -95
+        cross_above_200: 95.0
+        cross_above_100: 75.0
+        cross_above_50: 55.0
+        cross_above_20: 35.0
+        cross_below_20: -35.0
+        cross_below_50: -55.0
+        cross_below_100: -75.0
+        cross_below_200: -95.0
     sr:
       cluster_pct: 0.01
       breakout_volume_mult: 1.5
       scores:
-        strong_bounce_off_support: 80
-        breakout_above_resistance: 85
-        approach_support: 20
-        no_interaction: 0
-        approach_resistance: -20
-        strong_rejection_off_resistance: -80
-        breakdown_below_support: -85
+        strong_bounce_off_support: 80.0
+        breakout_above_resistance: 85.0
+        approach_support: 20.0
+        no_interaction: 0.0
+        approach_resistance: -20.0
+        strong_rejection_off_resistance: -80.0
+        breakdown_below_support: -85.0
     macd:
       fast: 12
       slow: 26
       signal: 9
       micro_signals:
-        golden_cross: 35
-        death_cross: -35
-        macd_above_zero: 15
-        macd_below_zero: -15
-        histogram_green_expanding: 20
-        histogram_green_contracting: 5
-        histogram_red_expanding: -20
-        histogram_red_contracting: -5
-        bullish_divergence: 30
-        bearish_divergence: -30
+        golden_cross: 35.0
+        death_cross: -35.0
+        macd_above_zero: 15.0
+        macd_below_zero: -15.0
+        histogram_green_expanding: 20.0
+        histogram_green_contracting: 5.0
+        histogram_red_expanding: -20.0
+        histogram_red_contracting: -5.0
+        bullish_divergence: 30.0
+        bearish_divergence: -30.0
     rsi:
       period: 14
       scores:
-        crosses_up_30: 70
-        below_30_rising: 40
-        below_30_falling: -10
-        between_30_50_rising: 25
-        between_30_50_falling: -15
-        between_50_70_rising: 25
-        between_50_70_falling: -15
-        above_70_rising: 10
-        above_70_falling: -40
-        crosses_down_70: -70
+        crosses_up_30: 70.0
+        below_30_rising: 40.0
+        below_30_falling: -10.0
+        between_30_50_rising: 25.0
+        between_30_50_falling: -15.0
+        between_50_70_rising: 25.0
+        between_50_70_falling: -15.0
+        above_70_rising: 10.0
+        above_70_falling: -40.0
+        crosses_down_70: -70.0
   short:
     thresholds:
       strong_buy: 85
@@ -292,7 +292,7 @@ strategies:
         above_70_falling: -40
         crosses_down_70: -70
 universe:
-  default: combined        # sp500 ∪ sp1000 ∪ watchlist (de-duplicated)
+  default: combined
   timeframe: daily
   watchlist_file: data/watchlist.csv
 risk:

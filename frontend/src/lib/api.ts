@@ -88,6 +88,11 @@ export function fetchBars(symbol: string, range = "1y") {
   return get<BarsResponse>(`/api/symbols/${symbol}/bars`, { range });
 }
 
+/** Fetch 30-day bars for a sparkline (encodes symbol for index tickers like ^GSPC). */
+export function fetchSparkline(symbol: string) {
+  return get<BarsResponse>(`/api/symbols/${encodeURIComponent(symbol)}/bars`, { range: "1m" });
+}
+
 export function fetchSignalAudit(symbol: string, date?: string) {
   const p: Record<string, string> = {};
   if (date) p.date = date;

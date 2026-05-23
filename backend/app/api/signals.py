@@ -14,14 +14,17 @@ router = APIRouter(prefix="/api/signals", tags=["signals"])
 _SESSION = make_session_factory()
 
 
+_VALID_UNIVERSES = ("watchlist", "sp500", "combined", "midcap", "smallcap")
+
+
 @router.get("")
 def get_signals(
     date_param: str | None = Query(None, alias="date", description="YYYY-MM-DD"),
-    universe: str = Query("watchlist", description="watchlist | sp500"),
+    universe: str = Query("combined", description="watchlist | sp500 | combined | midcap | smallcap"),
 ) -> dict:
     """Return the ranked signal table from the most recent run matching the filters."""
-    if universe not in ("watchlist", "sp500"):
-        raise HTTPException(422, detail="universe must be 'watchlist' or 'sp500'")
+    if universe not in _VALID_UNIVERSES:
+        raise HTTPException(422, detail=f"universe must be one of {_VALID_UNIVERSES}")
 
     with _SESSION() as session:
         q = session.query(Run).filter(Run.universe == universe).order_by(desc(Run.id))
