@@ -1,0 +1,252 @@
+================================================================================
+  ALPHASIGNAL V2 — DISASTER RECOVERY GUIDE
+  Last updated: 2026-05-23
+  Repository:   https://github.com/james84wang/AlphaSignalV2
+================================================================================
+
+This guide tells you exactly how to go from a brand-new Mac to a fully working
+AlphaSignal app. Follow the sections in order.
+
+--------------------------------------------------------------------------------
+SECTION 1 — PREREQUISITES  (things that must be installed on the Mac)
+--------------------------------------------------------------------------------
+
+1.1  Python 3.11 or newer
+     Check:   python3 --version
+     Install: https://www.python.org/downloads/
+              Download the latest macOS installer and run it.
+
+1.2  Node.js 18 or newer  (includes npm)
+     Check:   node --version
+     Install: https://nodejs.org/en/download
+              Download the macOS LTS installer and run it.
+
+1.3  Git  (comes pre-installed on modern Macs)
+     Check:   git --version
+     Install if missing: xcode-select --install   (run in Terminal)
+
+That is all. No other tools need to be installed manually.
+
+--------------------------------------------------------------------------------
+SECTION 2 — GET THE CODE
+--------------------------------------------------------------------------------
+
+Open Terminal and run these commands exactly as written:
+
+    cd ~/Documents
+    git clone https://github.com/james84wang/AlphaSignalV2.git
+    cd AlphaSignalV2
+
+You now have the full project on your Mac.
+
+If GitHub asks for a password, use a Personal Access Token (not your GitHub
+login password):
+  - Go to: https://github.com/settings/tokens/new
+  - Note = AlphaSignal, Expiration = No expiration, tick "repo"
+  - Click Generate token, copy the ghp_... string, paste as password.
+
+--------------------------------------------------------------------------------
+SECTION 3 — FIRST-TIME SETUP (run once after cloning)
+--------------------------------------------------------------------------------
+
+Step 3a — Install Python dependencies
+
+    cd ~/Documents/AlphaSignalV2
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -e ".[dev]"
+
+    This installs: FastAPI, pandas, numpy, yfinance, SQLAlchemy, pandas-ta,
+                   PyYAML, pydantic, pyarrow, uvicorn, httpx, apscheduler,
+                   pytest, ruff.
+
+Step 3b — Install Node/frontend dependencies
+
+    cd frontend
+    npm install
+    cd ..
+
+Step 3c — Create the data directory and seed files
+
+    mkdir -p data
+
+    The app will auto-create signals.db and cache files on first run.
+    If you have a backup of data/signals.db, copy it here now.
+
+    Your watchlist lives in data/watchlist.csv.
+    Format:  symbol,exchange
+    Example:
+        symbol,exchange
+        AAPL,NASDAQ
+        MSFT,NASDAQ
+        NVDA,NASDAQ
+
+    Your inverse-ETF map lives in data/inverse_etfs.csv.
+    Format:  symbol,inverse_etf_symbol,leverage,note
+    Example:
+        symbol,inverse_etf_symbol,leverage,note
+        AAPL,SQQQ,3x,Nasdaq proxy
+
+--------------------------------------------------------------------------------
+SECTION 4 — START THE APP
+--------------------------------------------------------------------------------
+
+Every time you want to use the app, run this single command:
+
+    cd ~/Documents/AlphaSignalV2
+    scripts/launch.sh
+
+What it does automatically:
+  - Activates the Python virtual environment
+  - Builds the React frontend if needed (first run takes ~30 seconds)
+  - Starts the FastAPI backend on http://localhost:8000
+  - Opens the app in a Chrome window (app mode, no URL bar)
+
+To force a frontend rebuild:
+
+    scripts/launch.sh --rebuild
+
+To start without rebuilding (faster):
+
+    scripts/launch.sh --no-build
+
+--------------------------------------------------------------------------------
+SECTION 5 — FIRST RUN CHECKLIST
+--------------------------------------------------------------------------------
+
+After the app opens in Chrome:
+
+[ ] Go to Settings → Watchlist → add the stocks you want to track
+[ ] Go to Settings → check Strategy weights look correct
+[ ] Go to Dashboard → click "Run Long Signals" to generate your first scan
+    (this downloads price data from Yahoo Finance — takes 1-5 minutes
+     depending on how many symbols are in your universe)
+[ ] Results appear in the Long Signals / Short Signals / Watchlist sections
+
+--------------------------------------------------------------------------------
+SECTION 6 — WHAT EACH PART OF THE APP DOES
+--------------------------------------------------------------------------------
+
+Dashboard         Main screen. Market overview bar (9 indices + Fear & Greed
+                  gauge with sparklines). Run Long/Short signal scans. View
+                  ranked results in three sections: Long Signals, Short Signals,
+                  Watchlist Signals. Click any row for full chart + score audit.
+
+Symbol detail     Candlestick chart (TradingView) + full sub-score breakdown
+                  for one stock on any date.
+
+Backtest          Run the strategy over 1-5 years of history. Choose universe
+                  (Watchlist / S&P 500 / S&P MidCap 400 / S&P SmallCap 600 /
+                  Full Universe). View equity curve, metrics, trade log.
+
+Settings          Edit strategy weights, signal thresholds, and scoring tables
+                  independently for Long and Short profiles. Manage watchlist.
+                  View inverse-ETF mappings. Toggle the daily auto-run schedule.
+                  Export all settings to a .xlsx spreadsheet.
+
+--------------------------------------------------------------------------------
+SECTION 7 — WHERE EVERYTHING IS STORED
+--------------------------------------------------------------------------------
+
+config.yaml               All strategy weights, thresholds, scoring tables.
+                          Edit via the Settings UI — do not edit by hand.
+
+data/signals.db           SQLite database: all signal runs, backtest results,
+                          watchlist entries. Back this up if you want history.
+
+data/watchlist.csv        Your personal watchlist (also editable in the UI).
+data/inverse_etfs.csv     Inverse-ETF map (editable CSV — no UI editor yet).
+data/sp500.csv            Cached S&P 500 symbol list (auto-refreshed).
+data/sp400.csv            Cached S&P MidCap 400 list (auto-refreshed).
+data/sp600.csv            Cached S&P SmallCap 600 list (auto-refreshed).
+data/cache/               Parquet price cache (auto-rebuilt from Yahoo Finance).
+
+backend/                  Python FastAPI backend (API routes, indicators,
+                          scoring engine, backtest engine, database models).
+
+frontend/src/             React + TypeScript frontend source code.
+frontend/dist/            Compiled frontend (auto-generated — do not edit).
+backend/app/static/       Copy of dist/ served by FastAPI (auto-generated).
+
+scripts/launch.sh         The one command to start everything.
+scripts/run_daily.py      Optional: run a daily scan from the command line
+                          (used internally by the scheduler).
+
+--------------------------------------------------------------------------------
+SECTION 8 — SAVING YOUR CHANGES TO GITHUB (after any work session)
+--------------------------------------------------------------------------------
+
+After making changes (especially to config.yaml or source files), run:
+
+    cd ~/Documents/AlphaSignalV2
+    git add -A
+    git commit -m "describe what you changed"
+    git push
+
+If git push asks for a password, use your Personal Access Token (ghp_...).
+See Section 2 above for how to create one.
+
+To store the token permanently so you never get asked again:
+
+    git config --global credential.helper osxkeychain
+
+Then push once — enter your username and token — macOS Keychain stores it.
+
+--------------------------------------------------------------------------------
+SECTION 9 — TROUBLESHOOTING
+--------------------------------------------------------------------------------
+
+Problem: "command not found: python3"
+Fix:     Install Python from https://www.python.org/downloads/
+
+Problem: "command not found: node" or "command not found: npm"
+Fix:     Install Node.js from https://nodejs.org/en/download
+
+Problem: App opens but shows a blank page or "Cannot connect"
+Fix:     The backend did not start. Check Terminal for error messages.
+         Try:  cd ~/Documents/AlphaSignalV2 && scripts/launch.sh
+
+Problem: "No signals yet" on Dashboard
+Fix:     Normal on a fresh install. Click "Run Long Signals" to generate
+         the first scan. It downloads price data — allow 2-5 minutes.
+
+Problem: Settings shows an error loading config
+Fix:     Ensure the backend is running (check Terminal).
+         If config.yaml is corrupted, restore it from GitHub:
+         git checkout config.yaml
+
+Problem: "pip install" fails with permission errors
+Fix:     Make sure you activated the virtual environment first:
+         source .venv/bin/activate
+
+Problem: Frontend looks outdated after a code update
+Fix:     scripts/launch.sh --rebuild
+
+Problem: Port 8000 already in use
+Fix:     lsof -ti:8000 | xargs kill -9
+         Then run scripts/launch.sh again.
+
+--------------------------------------------------------------------------------
+SECTION 10 — TECH STACK REFERENCE (for Claude or a developer)
+--------------------------------------------------------------------------------
+
+Backend:   Python 3.11+, FastAPI, uvicorn, pandas, numpy, pandas-ta,
+           yfinance, pydantic v2, PyYAML, SQLAlchemy (SQLite), pyarrow,
+           httpx, apscheduler
+
+Frontend:  React 18, Vite, TypeScript, Tailwind CSS, TanStack Query,
+           lightweight-charts (TradingView), react-router-dom, xlsx (SheetJS)
+
+Database:  SQLite (data/signals.db)  — no setup required, auto-created
+
+Config:    config.yaml — single source of truth for all strategy parameters
+
+Tests:     pytest (backend)   →  cd AlphaSignalV2 && pytest -q
+           vitest (frontend)  →  cd frontend && npm test
+
+Linting:   ruff (Python)      →  ruff check backend/
+           eslint (TS)        →  cd frontend && npm run lint
+
+================================================================================
+  END OF RECOVERY GUIDE
+================================================================================
