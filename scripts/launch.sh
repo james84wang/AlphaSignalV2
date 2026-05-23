@@ -2,63 +2,86 @@
 # AlphaSignal — one-click launcher (macOS / Linux)
 #
 # What it does:
-#   1. Builds the React frontend into frontend/dist/ (skipped if already built)
-#   2. Starts the FastAPI backend, which serves the built frontend at http://localhost:8000
-#   3. Opens the app in Chrome "app mode" (no address bar — native-window feel)
-#      or falls back to Safari / your default browser if Chrome isn't installed.
+#   1. Activates the Python virtual environment.
+#   2. Builds the React frontend into frontend/dist/ when source has changed
+#      (or always, if --rebuild is passed).
+#   3. Starts the FastAPI backend on port 8000, which also serves the built
+#      frontend at the same URL — no separate frontend process needed.
+#   4. Opens the app in your browser (Chrome app-mode if available).
 #
 # Usage:
-#   bash scripts/launch.sh            # normal launch (rebuild only if dist is missing)
-#   bash scripts/launch.sh --rebuild  # force a fresh frontend build first
+#   bash scripts/launch.sh            # auto-rebuilds only when source changed
+#   bash scripts/launch.sh --rebuild  # force a fresh frontend build
+#   bash scripts/launch.sh --no-build # skip build check (fastest cold-start)
 #
 set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="$REPO_ROOT/.venv"
 DIST="$REPO_ROOT/frontend/dist"
+SRC="$REPO_ROOT/frontend/src"
 PORT=8000
+ARG="${1:-}"
 
 # ── 1. Activate virtual environment ───────────────────────────────────────────
-if [ -f "$VENV/bin/activate" ]; then
-    # shellcheck disable=SC1091
-    source "$VENV/bin/activate"
-else
-    echo "ERROR: virtual environment not found at $VENV"
-    echo "       Run: python3.11 -m venv .venv && source .venv/bin/activate && pip install -e .[dev]"
+if [ ! -f "$VENV/bin/activate" ]; then
+    echo ""
+    echo "ERROR: Python virtual environment not found at .venv/"
+    echo ""
+    echo "Set it up once with:"
+    echo "  cd $(basename "$REPO_ROOT")"
+    echo "  python3.11 -m venv .venv"
+    echo "  source .venv/bin/activate"
+    echo "  pip install -e .[dev]"
+    echo ""
     exit 1
 fi
+# shellcheck disable=SC1091
+source "$VENV/bin/activate"
 
-# ── 2. Build frontend if needed ────────────────────────────────────────────────
-if [ ! -f "$DIST/index.html" ] || [ "${1:-}" = "--rebuild" ]; then
-    echo "==> Building frontend (this takes ~30 seconds the first time)..."
+# ── 2. Frontend build ──────────────────────────────────────────────────────────
+needs_build() {
+    # Rebuild if dist/index.html doesn't exist ...
+    [ ! -f "$DIST/index.html" ] && return 0
+    # ... or if any file under frontend/src/ is newer than the last build.
+    [ -n "$(find "$SRC" -newer "$DIST/index.html" -type f 2>/dev/null | head -1)" ] && return 0
+    return 1
+}
+
+if [ "$ARG" = "--no-build" ]; then
+    echo "==> Skipping frontend build (--no-build)."
+elif [ "$ARG" = "--rebuild" ] || needs_build; then
+    echo "==> Building frontend..."
     cd "$REPO_ROOT/frontend"
     npm install --silent
     npm run build
     cd "$REPO_ROOT"
-    echo "==> Frontend built successfully."
+    echo "==> Frontend built."
+else
+    echo "==> Frontend is up to date, skipping build."
 fi
 
 # ── 3. Open in browser after the server starts ────────────────────────────────
 (sleep 2 && {
     URL="http://localhost:$PORT"
-    # Chrome "app mode" hides the address bar for a desktop-app feel.
-    # Try Google Chrome, then Chromium, then fall back to whatever `open` uses.
     if open -Ra "Google Chrome" 2>/dev/null; then
-        open -na "Google Chrome" --args --app="$URL"
+        open -na "Google Chrome" --args --app="$URL" 2>/dev/null || open "$URL"
     elif open -Ra "Chromium" 2>/dev/null; then
-        open -na "Chromium" --args --app="$URL"
+        open -na "Chromium" --args --app="$URL" 2>/dev/null || open "$URL"
     else
-        open "$URL"
+        open "$URL" 2>/dev/null || true
     fi
 }) &
 
 echo ""
 echo "============================================================"
-echo "  AlphaSignal — http://localhost:$PORT"
+echo "  AlphaSignal"
+echo "  http://localhost:$PORT"
+echo ""
 echo "  Press Ctrl-C to stop."
 echo "============================================================"
 echo ""
 
-# ── 4. Start backend (serves API + static frontend on port 8000) ──────────────
+# ── 4. Start backend (serves API + built frontend on port 8000) ───────────────
 cd "$REPO_ROOT"
-exec uvicorn backend.app.main:app --port "$PORT" --host 0.0.0.0
+exec uvicorn backend.app.main:app --port "$PORT" --host 127.0.0.1
