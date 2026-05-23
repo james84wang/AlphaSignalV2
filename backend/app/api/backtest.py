@@ -37,6 +37,7 @@ class BacktestRequest(BaseModel):
     initial_account: Optional[float] = None
     slippage_pct: Optional[float] = None
     commission: Optional[float] = None
+    strategy: str = "long"        # "long" | "short"
 
 
 @router.post("", status_code=202)
@@ -52,8 +53,8 @@ def start_backtest(body: BacktestRequest) -> dict:
         universe_name = None
     else:
         universe_name = body.universe or "watchlist"
-        if universe_name not in ("watchlist", "sp500"):
-            raise HTTPException(422, detail="universe must be 'watchlist' or 'sp500'")
+        if universe_name not in ("watchlist", "sp500", "combined"):
+            raise HTTPException(422, detail="universe must be 'watchlist', 'sp500', or 'combined'")
 
     # Resolve dates.
     end_date = date.fromisoformat(body.end) if body.end else date.today()
@@ -65,20 +66,24 @@ def start_backtest(body: BacktestRequest) -> dict:
     if start_date >= end_date:
         raise HTTPException(422, detail="start must be before end")
 
+    if body.strategy not in ("long", "short"):
+        raise HTTPException(422, detail="strategy must be 'long' or 'short'")
+
     msg = (
         f"Backtest started: {universe_name or 'custom'} "
-        f"{start_date} → {end_date}"
+        f"{start_date} → {end_date} strategy={body.strategy}"
     )
 
     job = create_job("backtest", meta={
         "universe": universe_name,
         "start": str(start_date),
         "end": str(end_date),
+        "strategy": body.strategy,
     })
 
     t = threading.Thread(
         target=_run_backtest_task,
-        args=(job.id, body, universe_name, start_date, end_date),
+        args=(job.id, body, universe_name, start_date, end_date, body.strategy),
         daemon=True,
     )
     t.start()
@@ -113,6 +118,7 @@ def _run_backtest_task(
     universe_name: str | None,
     start: date,
     end: date,
+    strategy: str = "long",
 ) -> None:
     try:
         cfg = load_config(_CONFIG_PATH)
@@ -143,6 +149,7 @@ def _run_backtest_task(
             end=end,
             cfg=cfg,
             data_fetcher=fetcher,
+            strategy=strategy,
             initial_account=body.initial_account,
             slippage_pct=body.slippage_pct,
             commission=body.commission,
@@ -152,7 +159,7 @@ def _run_backtest_task(
         cfg_hash = config_hash(_CONFIG_PATH)
         db_run_id = save_backtest_result(result, cfg_hash, duration)
 
-        finish_job(job_id, {
+        payload: dict = {
             "db_run_id": db_run_id,
             "duration_seconds": round(duration, 2),
             "params": result.params,
@@ -160,7 +167,12 @@ def _run_backtest_task(
             "equity_curve": result.equity_curve,
             "trades": [asdict(t) for t in result.trades],
             "survivorship_note": result.survivorship_note,
-        })
+            "strategy": strategy,
+        }
+        if result.coverage_report is not None:
+            payload["coverage_report"] = result.coverage_report.to_dict()
+
+        finish_job(job_id, payload)
 
     except Exception as exc:  # noqa: BLE001
         logger.exception("Backtest failed for job %s", job_id)

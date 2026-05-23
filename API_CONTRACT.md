@@ -399,20 +399,25 @@ Start a backtest run in the background.
   "end": "2025-01-01",
   "initial_account": 100000,
   "slippage_pct": 0.001,
-  "commission": 1.0
+  "commission": 1.0,
+  "strategy": "long"
 }
 ```
 
 `universe` and `symbols` are mutually exclusive; if `universe` is given, symbols are loaded from it.
 `start` and `end` default to `cfg.backtest.start_years_back` years ago → today.
 `initial_account`, `slippage_pct`, `commission` fall back to config defaults.
+`strategy` is `"long"` (default) or `"short"`. For `"short"`, the signal is computed on the
+underlying using the short profile, but the **trade** fills on the real inverse ETF from
+`data/inverse_etfs.csv`. Names with no mapped inverse ETF are reported under
+`coverage_report.skipped_no_instrument` and are NOT included in headline metrics.
 
 **Response 202**
 ```json
 {
   "job_id": "d8e2f1a4",
   "status": "running",
-  "message": "Backtest started: watchlist 2020-01-01 → 2025-01-01"
+  "message": "Backtest started: watchlist 2020-01-01 → 2025-01-01 strategy=long"
 }
 ```
 
@@ -437,10 +442,12 @@ Poll status or retrieve the full result of a backtest job.
   "job_id": "d8e2f1a4",
   "status": "done",
   "db_run_id": 3,
+  "strategy": "long",
   "started_at": "2025-01-15T18:30:00+00:00",
   "finished_at": "2025-01-15T18:35:00+00:00",
   "duration_seconds": 300.4,
   "params": {
+    "strategy": "long",
     "start": "2020-01-01",
     "end": "2025-01-01",
     "symbols": ["AAPL", "MSFT"],
@@ -475,12 +482,66 @@ Poll status or retrieve the full result of a backtest job.
       "initial_stop": 294.10,
       "pnl": 610.50,
       "pnl_pct": 6.12,
-      "exit_reason": "signal"
+      "exit_reason": "signal",
+      "underlying_symbol": null,
+      "trade_instrument": null,
+      "synthetic_pnl": null,
+      "synthetic_pnl_pct": null
     }
   ],
-  "survivorship_note": "SURVIVORSHIP BIAS WARNING: ..."
+  "survivorship_note": "SURVIVORSHIP BIAS WARNING: ...",
+  "coverage_report": null
 }
 ```
+
+For `strategy="short"` runs, `coverage_report` is populated:
+
+```json
+{
+  "coverage_report": {
+    "tested": [
+      {
+        "underlying": "SPY",
+        "inverse_etf": "SH",
+        "window_tested_start": "2006-06-19",
+        "window_tested_end": "2025-01-15",
+        "n_trades": 12,
+        "skipped_signals_before_etf_launch": 0
+      }
+    ],
+    "skipped_no_instrument": ["AAPL", "MSFT"],
+    "skipped_insufficient_history": [
+      { "underlying": "IWM", "inverse_etf": "RWM", "reason": "only 30 overlapping bars (need ≥ 50)" }
+    ],
+    "skipped_data_error": [],
+    "summary": {
+      "universe_size": 4,
+      "n_testable": 1,
+      "pct_testable": 25.0,
+      "avg_tested_window_days": 6780
+    }
+  }
+}
+```
+
+Short trades also carry decay-diagnostic fields:
+
+```json
+{
+  "symbol": "SH",
+  "underlying_symbol": "SPY",
+  "trade_instrument": "SH",
+  "pnl": 320.50,
+  "pnl_pct": 3.2,
+  "synthetic_pnl": 450.20,
+  "synthetic_pnl_pct": 4.5,
+  "...": "..."
+}
+```
+
+`synthetic_pnl` is what the trade would have returned if we had simply inverted the
+underlying's return (−1× the underlying's price change over the same trade window).
+Comparing `pnl` vs `synthetic_pnl` shows the inverse-ETF decay drag.
 
 **Response 200 — error**
 ```json

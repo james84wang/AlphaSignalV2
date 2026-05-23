@@ -31,10 +31,12 @@ class BacktestRun(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     run_timestamp = Column(String, nullable=False)   # ISO 8601 UTC
     config_hash = Column(String, nullable=False)     # first 16 hex of SHA-256(config.yaml)
+    strategy = Column(String, nullable=False, default="long")   # "long" | "short"
     params_json = Column(String, nullable=False)     # serialised BacktestResult.params
     metrics_json = Column(String, nullable=False)    # serialised BacktestResult.metrics
     duration_seconds = Column(Float, nullable=False)
     survivorship_note = Column(String, nullable=False)
+    coverage_json = Column(String, nullable=True)    # JSON CoverageReport (short runs only)
 
     trades = relationship("BacktestTrade", back_populates="run", cascade="all, delete-orphan")
     equity = relationship("BacktestEquity", back_populates="run", cascade="all, delete-orphan")
@@ -65,6 +67,11 @@ class BacktestTrade(Base):
     pnl = Column(Float, nullable=False)
     pnl_pct = Column(Float, nullable=False)
     exit_reason = Column(String, nullable=False)   # "stop" | "signal" | "end_of_data"
+    # Short-only fields (null for long trades)
+    underlying_symbol = Column(String, nullable=True)   # underlying that generated signal
+    trade_instrument = Column(String, nullable=True)    # the actual ETF traded
+    synthetic_pnl = Column(Float, nullable=True)        # decay diagnostic: −1× underlying return
+    synthetic_pnl_pct = Column(Float, nullable=True)
 
     run = relationship("BacktestRun", back_populates="trades")
 
@@ -102,14 +109,20 @@ def save_backtest_result(
     # Ensure backtest tables exist
     init_backtest_db(db_path)
 
+    coverage_json = None
+    if result.coverage_report is not None:
+        coverage_json = json.dumps(result.coverage_report.to_dict(), default=str)
+
     with Session() as session:
         run = BacktestRun(
             run_timestamp=datetime.now(tz=timezone.utc).isoformat(),
             config_hash=config_hash,
+            strategy=getattr(result, "strategy", "long"),
             params_json=json.dumps(result.params, default=str),
             metrics_json=json.dumps(result.metrics, default=str),
             duration_seconds=round(duration_seconds, 2),
             survivorship_note=result.survivorship_note,
+            coverage_json=coverage_json,
         )
         session.add(run)
         session.flush()  # get run.id
@@ -128,6 +141,10 @@ def save_backtest_result(
                 pnl=t.pnl,
                 pnl_pct=t.pnl_pct,
                 exit_reason=t.exit_reason,
+                underlying_symbol=getattr(t, "underlying_symbol", None),
+                trade_instrument=getattr(t, "trade_instrument", None),
+                synthetic_pnl=getattr(t, "synthetic_pnl", None),
+                synthetic_pnl_pct=getattr(t, "synthetic_pnl_pct", None),
             ))
 
         for e in result.equity_curve:

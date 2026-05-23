@@ -131,7 +131,7 @@ class TestEntryOnNextOpen:
         df = _make_ohlcv(n=120, seed=55)
 
         # Build a fake signals list: Hold everywhere except signal_bar_idx
-        def _fake_compute_signals(data, _cfg):
+        def _fake_compute_signals(data, _cfg, strategy="long"):
             results = []
             for i in range(len(data)):
                 if i == signal_bar_idx:
