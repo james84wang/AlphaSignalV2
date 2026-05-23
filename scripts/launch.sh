@@ -62,12 +62,16 @@ else
 fi
 
 # ── 3. Open in browser after the server starts ────────────────────────────────
-(sleep 2 && {
+# Use --new-window so Chrome never restores a stale cached app-mode session.
+# The backend sends Cache-Control: no-cache on index.html, and every build
+# embeds a unique timestamp in the JS bundle filename, so stale-cache issues
+# are eliminated end-to-end.
+(sleep 3 && {
     URL="http://localhost:$PORT"
     if open -Ra "Google Chrome" 2>/dev/null; then
-        open -na "Google Chrome" --args --app="$URL" 2>/dev/null || open "$URL"
+        open -na "Google Chrome" --args --new-window --app="$URL" 2>/dev/null || open "$URL"
     elif open -Ra "Chromium" 2>/dev/null; then
-        open -na "Chromium" --args --app="$URL" 2>/dev/null || open "$URL"
+        open -na "Chromium" --args --new-window --app="$URL" 2>/dev/null || open "$URL"
     else
         open "$URL" 2>/dev/null || true
     fi
