@@ -7,8 +7,11 @@ and prints a ranked table (strongest Buy → strongest Sell).
 
 Usage (run from the repo root, AlphaSignalV2/):
 ----------------------------------------------------
-  # Today's signals for your watchlist (default):
+  # Today's signals for your watchlist (default, long profile):
   python scripts/run_daily.py
+
+  # Run the short profile:
+  python scripts/run_daily.py --strategy short
 
   # Use the full S&P 500:
   python scripts/run_daily.py --universe sp500
@@ -84,6 +87,12 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--strategy",
+        choices=["long", "short"],
+        default="long",
+        help="Strategy profile to score against: 'long' (default) or 'short'.",
+    )
+    parser.add_argument(
         "--date",
         type=str,
         default=None,
@@ -146,11 +155,13 @@ def main() -> None:
 
     target_date = _resolve_target_date(args.date)
     universe_name = args.universe
+    strategy_name = args.strategy
 
     print(f"\n{'='*68}")
     print(f"  AlphaSignal — Daily Signal Runner")
     print(f"{'='*68}")
     print(f"  Universe  : {universe_name}")
+    print(f"  Strategy  : {strategy_name}")
     print(f"  Target    : {target_date}")
 
     cfg = load_config(_CONFIG_PATH)
@@ -192,7 +203,7 @@ def main() -> None:
                 errors.append(symbol)
                 continue
 
-            results = run_engine(df, cfg)
+            results = run_engine(df, cfg, strategy=strategy_name)
             if not results:
                 print("SKIP  (engine: no results)")
                 errors.append(symbol)
@@ -240,6 +251,7 @@ def main() -> None:
         run = Run(
             run_timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             universe=universe_name,
+            strategy=strategy_name,
             config_hash=cfg_hash,
             n_symbols=len(symbols),
             n_success=len(successes),
@@ -254,6 +266,7 @@ def main() -> None:
                 run_id=run.id,
                 date=s["date"],
                 symbol=s["symbol"],
+                strategy=strategy_name,
                 composite=s["composite"],
                 signal=s["signal"],
                 long_allowed=s["long_allowed"],

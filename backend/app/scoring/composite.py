@@ -4,11 +4,14 @@ Two public surfaces:
   score_bar(sub_scores, weights, regime, thresholds) → dict
       Pure rollup — used by the Example_Calc golden test and the engine internals.
 
-  run_engine(df, cfg) → list[dict]
+  run_engine(df, cfg, strategy) → list[dict]
       Full pipeline: indicators → per-component scores → regime gate → composite → signal.
       Each element is an auditable object for one bar.
+      ``strategy`` selects which profile ("long" | "short") to use; defaults to "long".
 """
 from __future__ import annotations
+
+from typing import Literal
 
 import pandas as pd
 
@@ -89,39 +92,46 @@ def score_bar(
 
 # ── Full engine ────────────────────────────────────────────────────────────────
 
-def run_engine(df: pd.DataFrame, cfg: AppConfig) -> list[dict]:
+def run_engine(
+    df: pd.DataFrame,
+    cfg: AppConfig,
+    strategy: Literal["long", "short"] = "long",
+) -> list[dict]:
     """Run the complete scoring pipeline over a daily OHLCV DataFrame.
 
     Args:
         df: DataFrame with columns [open, high, low, close, volume] and a DatetimeIndex.
         cfg: Loaded AppConfig.
+        strategy: Which profile to use — "long" (default) or "short".
 
     Returns:
         List of auditable bar dicts (one per row), ordered oldest → newest.
-        Each dict: {date, composite, signal, regime, components}.
+        Each dict: {date, composite, signal, regime, components, strategy}.
 
     No look-ahead: all indicator and scoring functions are backward-looking only.
     """
     if df.empty:
         return []
 
+    strat = cfg.get_strategy(strategy)
+
     # ── Indicators ────────────────────────────────────────────────────────────
-    ema_df = compute_emas(df, cfg.ema.periods, cfg.regime.slope_lookback)
-    macd_df = compute_macd(df, cfg.macd.fast, cfg.macd.slow, cfg.macd.signal)
-    rsi_s = compute_rsi(df, cfg.rsi.period)
+    ema_df = compute_emas(df, strat.ema.periods, strat.regime.slope_lookback)
+    macd_df = compute_macd(df, strat.macd.fast, strat.macd.slow, strat.macd.signal)
+    rsi_s = compute_rsi(df, strat.rsi.period)
     atr_s = compute_atr(df, cfg.risk.stop_loss_atr_period)  # noqa: F841 (used in Phase 3)
     candle_s = detect_candlestick_pattern(
         df,
-        long_candle_body_pct=cfg.candlestick.long_candle_body_pct,
-        hammer_wick_mult=cfg.candlestick.hammer_wick_mult,
-        doji_body_pct=cfg.candlestick.doji_body_pct,
+        long_candle_body_pct=strat.candlestick.long_candle_body_pct,
+        hammer_wick_mult=strat.candlestick.hammer_wick_mult,
+        doji_body_pct=strat.candlestick.doji_body_pct,
     )
     p3_s = detect_p3_pattern(df)
     p5_s = detect_p5_pattern(df)
-    sr_df = compute_sr_levels(df, cfg.sr.cluster_pct)
+    sr_df = compute_sr_levels(df, strat.sr.cluster_pct)
 
     # ── Regime ────────────────────────────────────────────────────────────────
-    regime_df = compute_regime(df["close"], ema_df, cfg.regime)
+    regime_df = compute_regime(df["close"], ema_df, strat.regime)
 
     # ── at_sr flag for candlestick context multiplier ─────────────────────────
     support = sr_df["support_level"]
@@ -133,14 +143,14 @@ def run_engine(df: pd.DataFrame, cfg: AppConfig) -> list[dict]:
     )
 
     # ── Scoring ───────────────────────────────────────────────────────────────
-    cs_scores = score_candlestick(candle_s, at_sr, cfg.candlestick)
-    p3_scores = score_p3(p3_s, cfg.p3)
-    p5_scores = score_p5(p5_s, cfg.p5)
-    vol_scores = score_volume(df["close"], df["open"], df["volume"], candle_s, cfg.volume)
-    ema_scores = score_ema(df["close"], ema_df, cfg.ema)
-    sr_scores = score_sr(df["close"], df["high"], df["low"], df["volume"], sr_df, cfg.sr)
-    macd_scores = score_macd(df["close"], macd_df, cfg.macd)
-    rsi_scores = score_rsi(rsi_s, cfg.rsi)
+    cs_scores = score_candlestick(candle_s, at_sr, strat.candlestick)
+    p3_scores = score_p3(p3_s, strat.p3)
+    p5_scores = score_p5(p5_s, strat.p5)
+    vol_scores = score_volume(df["close"], df["open"], df["volume"], candle_s, strat.volume)
+    ema_scores = score_ema(df["close"], ema_df, strat.ema)
+    sr_scores = score_sr(df["close"], df["high"], df["low"], df["volume"], sr_df, strat.sr)
+    macd_scores = score_macd(df["close"], macd_df, strat.macd)
+    rsi_scores = score_rsi(rsi_s, strat.rsi)
 
     # ── Assemble auditable output ─────────────────────────────────────────────
     results: list[dict] = []
@@ -159,8 +169,9 @@ def run_engine(df: pd.DataFrame, cfg: AppConfig) -> list[dict]:
             "macd":        float(macd_scores.iat[i]),
             "rsi":         float(rsi_scores.iat[i]),
         }
-        bar = score_bar(sub_scores, cfg.weights, regime, cfg.thresholds)
+        bar = score_bar(sub_scores, strat.weights, regime, strat.thresholds)
         bar["date"] = str(idx.date()) if hasattr(idx, "date") else str(idx)
+        bar["strategy"] = strategy
         results.append(bar)
 
     return results

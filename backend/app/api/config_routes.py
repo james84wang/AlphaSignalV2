@@ -1,9 +1,10 @@
-"""GET /api/config and PUT /api/config — read and update strategy configuration."""
+"""Per-strategy config API: GET/PUT /api/config/{strategy}."""
 from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from fastapi import APIRouter, HTTPException
@@ -17,6 +18,8 @@ router = APIRouter(prefix="/api/config", tags=["config"])
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CONFIG_PATH = _REPO_ROOT / "config.yaml"
 _VERSIONS_PATH = _REPO_ROOT.parent / "data" / "config_versions.jsonl"
+
+StrategyName = Literal["long", "short"]
 
 
 class WeightsUpdate(BaseModel):
@@ -43,25 +46,23 @@ class WeightsUpdate(BaseModel):
         return self
 
 
-@router.get("")
-def get_config() -> dict:
-    """Return the current strategy configuration as a JSON object."""
+@router.get("/{strategy}")
+def get_config(strategy: StrategyName) -> dict:
+    """Return the strategy configuration for the given profile as a JSON object."""
     cfg = load_config(_CONFIG_PATH)
-    return cfg.model_dump()
+    strat = cfg.get_strategy(strategy)
+    return strat.model_dump()
 
 
-@router.put("")
-def put_config(body: WeightsUpdate) -> dict:
-    """Update component weights, validate sum=100, write to config.yaml, version it."""
+@router.put("/{strategy}")
+def put_config(strategy: StrategyName, body: WeightsUpdate) -> dict:
+    """Update component weights for one strategy profile, validate sum=100, write to config.yaml."""
     with open(_CONFIG_PATH) as fh:
         raw = yaml.safe_load(fh)
 
-    # Snapshot old weights for versioning.
-    old_weights = dict(raw.get("weights", {}))
-
-    # Apply new weights.
+    old_weights = dict(raw["strategies"][strategy].get("weights", {}))
     new_weights = body.model_dump()
-    raw["weights"] = new_weights
+    raw["strategies"][strategy]["weights"] = new_weights
 
     try:
         with open(_CONFIG_PATH, "w") as fh:
@@ -69,13 +70,12 @@ def put_config(body: WeightsUpdate) -> dict:
     except OSError as exc:
         raise HTTPException(500, detail=f"Failed to write config.yaml: {exc}")
 
-    # Clear the config cache so the next load_config() picks up the new file.
     reset_config()
 
-    # Persist a versioned snapshot.
     now = datetime.now(timezone.utc).isoformat()
     snapshot = {
         "timestamp": now,
+        "strategy": strategy,
         "old_weights": old_weights,
         "new_weights": new_weights,
     }
@@ -84,11 +84,12 @@ def put_config(body: WeightsUpdate) -> dict:
         with open(_VERSIONS_PATH, "a") as fh:
             fh.write(json.dumps(snapshot) + "\n")
     except OSError:
-        pass  # Non-fatal — don't block the response.
+        pass
 
     new_hash = config_hash(_CONFIG_PATH)
     return {
         "ok": True,
+        "strategy": strategy,
         "weights": new_weights,
         "config_hash": new_hash,
         "version_saved_at": now,

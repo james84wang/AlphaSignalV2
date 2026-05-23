@@ -38,6 +38,7 @@ class Run(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     run_timestamp = Column(String, nullable=False)   # ISO 8601 UTC datetime
     universe = Column(String, nullable=False)        # "watchlist" | "sp500"
+    strategy = Column(String, nullable=False, server_default="long")  # "long" | "short"
     config_hash = Column(String, nullable=False)     # first 16 hex chars of SHA-256(config.yaml)
     n_symbols = Column(Integer, nullable=False)      # total symbols attempted
     n_success = Column(Integer, nullable=False)      # signals written
@@ -49,8 +50,8 @@ class Run(Base):
     def __repr__(self) -> str:
         return (
             f"<Run id={self.id} ts={self.run_timestamp!r} "
-            f"universe={self.universe!r} hash={self.config_hash!r} "
-            f"ok={self.n_success}/{self.n_symbols}>"
+            f"universe={self.universe!r} strategy={self.strategy!r} "
+            f"hash={self.config_hash!r} ok={self.n_success}/{self.n_symbols}>"
         )
 
 
@@ -69,6 +70,7 @@ class Signal(Base):
     run_id = Column(Integer, ForeignKey("runs.id"), nullable=False)
     date = Column(String, nullable=False)            # ISO date, e.g. "2024-01-15"
     symbol = Column(String, nullable=False)
+    strategy = Column(String, nullable=False, server_default="long")  # "long" | "short"
     composite = Column(Float, nullable=False)        # weighted composite in [-100, +100]
     signal = Column(String, nullable=False)          # "Strong Buy" | "Buy" | "Hold" | "Sell" | "Strong Sell"
     long_allowed = Column(Boolean, nullable=False)   # regime gate: longs permitted?
@@ -79,8 +81,8 @@ class Signal(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<Signal {self.symbol} {self.date} {self.signal!r} "
-            f"composite={self.composite:.2f}>"
+            f"<Signal {self.symbol} {self.date} strategy={self.strategy!r} "
+            f"{self.signal!r} composite={self.composite:.2f}>"
         )
 
 

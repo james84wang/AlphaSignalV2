@@ -31,6 +31,7 @@ _HISTORY_DAYS = 400
 
 class DailyRunRequest(BaseModel):
     universe: str = "watchlist"
+    strategy: str = "long"
     date: str | None = None
 
 
@@ -39,6 +40,8 @@ def trigger_daily_run(body: DailyRunRequest) -> dict:
     """Trigger a background daily signal run."""
     if body.universe not in ("watchlist", "sp500"):
         raise HTTPException(422, detail="universe must be 'watchlist' or 'sp500'")
+    if body.strategy not in ("long", "short"):
+        raise HTTPException(422, detail="strategy must be 'long' or 'short'")
 
     target_str = body.date or str(date.today())
     try:
@@ -46,10 +49,10 @@ def trigger_daily_run(body: DailyRunRequest) -> dict:
     except ValueError:
         raise HTTPException(422, detail="date must be YYYY-MM-DD")
 
-    job = create_job("daily_run", meta={"universe": body.universe, "date": target_str})
+    job = create_job("daily_run", meta={"universe": body.universe, "strategy": body.strategy, "date": target_str})
     t = threading.Thread(
         target=_run_daily_task,
-        args=(job.id, body.universe, target_date),
+        args=(job.id, body.universe, body.strategy, target_date),
         daemon=True,
     )
     t.start()
@@ -57,7 +60,7 @@ def trigger_daily_run(body: DailyRunRequest) -> dict:
     return {
         "job_id": job.id,
         "status": "running",
-        "message": f"Daily run started for universe={body.universe} date={target_str}",
+        "message": f"Daily run started for universe={body.universe} strategy={body.strategy} date={target_str}",
     }
 
 
@@ -82,7 +85,7 @@ def get_daily_run_status(job_id: str) -> dict:
 
 # ── Background worker ──────────────────────────────────────────────────────────
 
-def _run_daily_task(job_id: str, universe_name: str, target_date: date) -> None:
+def _run_daily_task(job_id: str, universe_name: str, strategy_name: str, target_date: date) -> None:
     try:
         cfg = load_config(_CONFIG_PATH)
         cfg_hash = config_hash(_CONFIG_PATH)
@@ -114,7 +117,7 @@ def _run_daily_task(job_id: str, universe_name: str, target_date: date) -> None:
                     errors.append(symbol)
                     continue
 
-                results = run_engine(df, cfg)
+                results = run_engine(df, cfg, strategy=strategy_name)
                 if not results:
                     errors.append(symbol)
                     continue
@@ -149,6 +152,7 @@ def _run_daily_task(job_id: str, universe_name: str, target_date: date) -> None:
             run = Run(
                 run_timestamp=now.isoformat(timespec="seconds"),
                 universe=universe_name,
+                strategy=strategy_name,
                 config_hash=cfg_hash,
                 n_symbols=len(symbols),
                 n_success=len(successes),
@@ -163,6 +167,7 @@ def _run_daily_task(job_id: str, universe_name: str, target_date: date) -> None:
                     run_id=run.id,
                     date=s["date"],
                     symbol=s["symbol"],
+                    strategy=strategy_name,
                     composite=s["composite"],
                     signal=s["signal"],
                     long_allowed=s["long_allowed"],

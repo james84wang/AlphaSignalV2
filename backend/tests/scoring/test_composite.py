@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backend.app.config import load_config
+from backend.app.config import Weights, load_config
 from backend.app.scoring.composite import run_engine, score_bar
 
 
@@ -205,3 +205,89 @@ class TestNoLookahead:
                 f"Look-ahead at cutoff={cutoff}: full={full_bar['composite']}, "
                 f"trunc={trunc_bar['composite']}"
             )
+
+
+# ── Per-profile golden tests ──────────────────────────────────────────────────
+
+class TestGoldenBothProfiles:
+    """Golden test must pass for both strategy profiles (they start identical)."""
+
+    _SUB_SCORES = {
+        "candlestick": 85.0, "p3": 70.0, "p5": 85.0, "volume": 60.0,
+        "ema": 35.0, "sr": 80.0, "macd": 55.0, "rsi": 40.0,
+    }
+    _REGIME = {"long_allowed": True, "short_allowed": False}
+
+    def test_long_profile_golden(self, cfg):
+        strat = cfg.get_strategy("long")
+        result = score_bar(self._SUB_SCORES, strat.weights, self._REGIME, strat.thresholds)
+        assert abs(result["composite"] - 63.15) < 1e-9
+
+    def test_short_profile_golden(self, cfg):
+        strat = cfg.get_strategy("short")
+        result = score_bar(self._SUB_SCORES, strat.weights, self._REGIME, strat.thresholds)
+        assert abs(result["composite"] - 63.15) < 1e-9
+
+
+# ── Profile independence (divergence) test ────────────────────────────────────
+
+class TestProfileIndependence:
+    """Long and short profiles can diverge: changing one must not affect the other."""
+
+    _SUB_SCORES = {
+        "candlestick": 85.0, "p3": 70.0, "p5": 85.0, "volume": 60.0,
+        "ema": 35.0, "sr": 80.0, "macd": 55.0, "rsi": 40.0,
+    }
+    _REGIME = {"long_allowed": True, "short_allowed": True}
+
+    def test_diverge_short_weight_leaves_long_unaffected(self, cfg):
+        """Modify short profile weight in memory; long composite must stay at 63.15."""
+        long_strat = cfg.get_strategy("long")
+        short_strat = cfg.get_strategy("short")
+
+        # Build a modified Weights for the short profile (rsi 10→20, ema 15→5).
+        short_weights_data = short_strat.weights.model_dump()
+        short_weights_data["rsi"] = 20.0
+        short_weights_data["ema"] = 5.0
+        modified_short_weights = Weights.model_validate(short_weights_data)
+
+        # Score with the modified short weights.
+        short_result = score_bar(
+            self._SUB_SCORES, modified_short_weights, self._REGIME, short_strat.thresholds
+        )
+
+        # Score with the original long weights.
+        long_result = score_bar(
+            self._SUB_SCORES, long_strat.weights, self._REGIME, long_strat.thresholds
+        )
+
+        # Long profile must still equal 63.15 (regime allows both, so gate is off).
+        assert abs(long_result["composite"] - 63.15) < 1e-9, (
+            f"Long profile contaminated: got {long_result['composite']}"
+        )
+
+        # Short (modified) must diverge from long.
+        assert abs(short_result["composite"] - long_result["composite"]) > 1e-6, (
+            "Profiles did not diverge after changing short weight"
+        )
+
+    def test_run_engine_strategy_param_routes_correctly(self, cfg):
+        """run_engine(..., strategy='long') and ('short') both complete without error."""
+        rng = np.random.default_rng(7)
+        prices = 100 + np.cumsum(rng.standard_normal(80) * 0.5)
+        opens = prices + rng.uniform(-0.2, 0.2, 80)
+        highs = np.maximum(opens, prices) + rng.uniform(0, 0.5, 80)
+        lows = np.minimum(opens, prices) - rng.uniform(0, 0.5, 80)
+        vols = rng.integers(500_000, 5_000_000, 80)
+        idx = pd.date_range("2023-01-01", periods=80, freq="B")
+        df = pd.DataFrame(
+            {"open": opens, "high": highs, "low": lows, "close": prices, "volume": vols},
+            index=idx,
+        )
+
+        long_results = run_engine(df, cfg, strategy="long")
+        short_results = run_engine(df, cfg, strategy="short")
+
+        assert len(long_results) == len(short_results) == len(df)
+        assert all(r["strategy"] == "long" for r in long_results)
+        assert all(r["strategy"] == "short" for r in short_results)

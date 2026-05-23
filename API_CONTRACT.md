@@ -158,11 +158,17 @@ Tries the DB first; recomputes on-the-fly if not persisted.
 
 ---
 
-## GET /api/config
+## GET /api/config/{strategy}
 
-Return the current strategy configuration (weights, thresholds, scoring tables).
+Return the configuration for a specific strategy profile (`long` or `short`).
 
-**Response 200** — the full config.yaml as a JSON object:
+**Path parameters**
+
+| Param      | Type   | Values         |
+|------------|--------|----------------|
+| `strategy` | string | `long`, `short` |
+
+**Response 200** — the strategy profile as a JSON object:
 ```json
 {
   "thresholds": {
@@ -182,15 +188,23 @@ Return the current strategy configuration (weights, thresholds, scoring tables).
     "rsi": 10
   },
   "regime": { "ema_period": 200, "slope_lookback": 20 },
-  "...": "all other config sections"
+  "...": "all other scoring tables for this profile"
 }
 ```
 
+**Response 422** — invalid strategy name.
+
 ---
 
-## PUT /api/config
+## PUT /api/config/{strategy}
 
-Update component weights. Validates that all 8 weights sum to 100. Persists a versioned snapshot.
+Update component weights for one strategy profile. Validates that all 8 weights sum to 100. Persists a versioned snapshot.
+
+**Path parameters**
+
+| Param      | Type   | Values         |
+|------------|--------|----------------|
+| `strategy` | string | `long`, `short` |
 
 **Request body**
 ```json
@@ -212,6 +226,7 @@ All 8 fields are required. Values must be non-negative and sum to exactly 100.
 ```json
 {
   "ok": true,
+  "strategy": "long",
   "weights": { "candlestick": 12, "p3": 8, "...": "..." },
   "config_hash": "new_hash_here",
   "version_saved_at": "2025-01-15T18:30:00+00:00"
@@ -230,11 +245,12 @@ Trigger a daily signal run in the background.
 ```json
 {
   "universe": "watchlist",
+  "strategy": "long",
   "date": "2025-01-15"
 }
 ```
 
-`universe` defaults to `"watchlist"`. `date` defaults to today.
+`universe` defaults to `"watchlist"`. `strategy` defaults to `"long"` (`"long"` or `"short"`). `date` defaults to today.
 
 **Response 202**
 ```json

@@ -316,7 +316,9 @@ class TestConfigWiring:
         from backend.app.config import Weights
         from backend.app.scoring.composite import run_engine
         new_weights = Weights(**weights_data)
-        cfg_alt = cfg_default.model_copy(update={"weights": new_weights})
+        long_strat_modified = cfg_default.get_strategy("long").model_copy(update={"weights": new_weights})
+        strategies_modified = cfg_default.strategies.model_copy(update={"long": long_strat_modified})
+        cfg_alt = cfg_default.model_copy(update={"strategies": strategies_modified})
 
         df = _make_ohlcv(n=100, seed=17)
         res_default = run_engine(df, cfg_default)
@@ -344,7 +346,9 @@ class TestConfigWiring:
 
         from backend.app.config import Weights
         new_weights = Weights(**weights_data)
-        cfg_alt = cfg_default.model_copy(update={"weights": new_weights})
+        long_strat_modified = cfg_default.get_strategy("long").model_copy(update={"weights": new_weights})
+        strategies_modified = cfg_default.strategies.model_copy(update={"long": long_strat_modified})
+        cfg_alt = cfg_default.model_copy(update={"strategies": strategies_modified})
 
         # Use many data points and strong trend to generate trades in both configs
         df = _make_ohlcv(n=200, seed=31, trend=0.3)

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import yaml
 from pydantic import BaseModel, field_validator, model_validator
@@ -210,9 +210,11 @@ class BacktestConfig(BaseModel):
     commission_per_trade: float
 
 
-# ── Root model ─────────────────────────────────────────────────────────────────
+# ── Per-strategy profile ───────────────────────────────────────────────────────
 
-class AppConfig(BaseModel):
+class StrategyConfig(BaseModel):
+    """All tunable parameters for one strategy profile (long or short)."""
+
     thresholds: Thresholds
     weights: Weights
     regime: RegimeConfig
@@ -224,14 +226,83 @@ class AppConfig(BaseModel):
     sr: SrConfig
     macd: MacdConfig
     rsi: RsiConfig
+
+    @property
+    def weights_valid(self) -> bool:
+        return True
+
+
+# ── Root model ─────────────────────────────────────────────────────────────────
+
+class StrategiesMap(BaseModel):
+    long: StrategyConfig
+    short: StrategyConfig
+
+
+class AppConfig(BaseModel):
+    strategies: StrategiesMap
     universe: UniverseConfig
     risk: RiskConfig
     backtest: BacktestConfig
 
     @property
     def weights_valid(self) -> bool:
-        """True when weight validation already passed (it always will if we got here)."""
+        """True when weight validation already passed for both profiles."""
         return True
+
+    def get_strategy(self, name: Literal["long", "short"]) -> StrategyConfig:
+        """Return the named strategy profile."""
+        if name == "long":
+            return self.strategies.long
+        if name == "short":
+            return self.strategies.short
+        raise ValueError(f"Unknown strategy name {name!r}; must be 'long' or 'short'")
+
+    # Convenience shims so old call-sites that read cfg.weights / cfg.thresholds
+    # etc. keep working — they get the long profile by default.
+    @property
+    def weights(self) -> Weights:
+        return self.strategies.long.weights
+
+    @property
+    def thresholds(self) -> Thresholds:
+        return self.strategies.long.thresholds
+
+    @property
+    def regime(self) -> RegimeConfig:
+        return self.strategies.long.regime
+
+    @property
+    def candlestick(self) -> CandlestickConfig:
+        return self.strategies.long.candlestick
+
+    @property
+    def p3(self) -> P3Config:
+        return self.strategies.long.p3
+
+    @property
+    def p5(self) -> P5Config:
+        return self.strategies.long.p5
+
+    @property
+    def volume(self) -> VolumeConfig:
+        return self.strategies.long.volume
+
+    @property
+    def ema(self) -> EmaConfig:
+        return self.strategies.long.ema
+
+    @property
+    def sr(self) -> SrConfig:
+        return self.strategies.long.sr
+
+    @property
+    def macd(self) -> MacdConfig:
+        return self.strategies.long.macd
+
+    @property
+    def rsi(self) -> RsiConfig:
+        return self.strategies.long.rsi
 
 
 _config: AppConfig | None = None
