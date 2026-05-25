@@ -154,9 +154,9 @@ cd frontend && npm test          # frontend tests
 
 ## How to rebuild frontend only
 ```bash
-cd frontend && npm run build
-cp -r dist/* ../backend/app/static/
+cd frontend && pnpm run build
 ```
+(The backend serves directly from `frontend/dist/` — no copy step needed.)
 
 ## Definition of Done
 

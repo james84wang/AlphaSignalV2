@@ -53,8 +53,15 @@ if [ "$ARG" = "--no-build" ]; then
 elif [ "$ARG" = "--rebuild" ] || needs_build; then
     echo "==> Building frontend..."
     cd "$REPO_ROOT/frontend"
-    npm install --silent
-    npm run build
+    # Use pnpm if available (required after mod-g switched package manager),
+    # fall back to npm only if pnpm is not installed.
+    if command -v pnpm &>/dev/null; then
+        pnpm install --frozen-lockfile --silent
+        pnpm run build
+    else
+        npm install --silent
+        npm run build
+    fi
     cd "$REPO_ROOT"
     echo "==> Frontend built."
 else
