@@ -1,13 +1,11 @@
 /**
  * TradeChart — candlestick chart for one symbol with backtest trade markers.
  *
- * Entry points: green ▲ below the bar
- * Exit points : red   ▼ above the bar
- *
- * Click any marked bar → detail panel shows P&L, cumulative P&L,
- * and the strategy score for that date (fetched lazily from the API).
+ * Bi-directional linking:
+ *   • Click a chart marker → highlights the corresponding table row and zooms chart.
+ *   • Click a table row   → highlights the chart markers and zooms chart to that trade.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createChart, ColorType, CrosshairMode, type IChartApi } from "lightweight-charts";
 import { fetchBars, fetchSignalAudit } from "../lib/api";
@@ -19,17 +17,22 @@ const GRID = "#1e293b";
 const TEXT = "#94a3b8";
 const BORDER = "#334155";
 
-interface ClickedPoint {
-  trade: TradeEntry;
-  type: "entry" | "exit";
-  /** Running P&L for this symbol across all trades up to and including this one. */
-  cumulativePnl: number;
+// ── Exit reason labels ────────────────────────────────────────────────────────
+
+const EXIT_REASON_LABELS: Record<string, string> = {
+  stop: "Stop Loss",
+  signal: "Signal Flip",
+  end_of_data: "End of Period",
+};
+
+function fmtExitReason(reason: string): string {
+  return EXIT_REASON_LABELS[reason] ?? reason.replace(/_/g, " ");
 }
 
+// ── Component ─────────────────────────────────────────────────────────────────
+
 interface Props {
-  /** Underlying ticker (used for bar fetch + signal score fetch). */
   symbol: string;
-  /** All trades for this symbol, chronological order. */
   trades: TradeEntry[];
   onClose: () => void;
 }
@@ -37,34 +40,80 @@ interface Props {
 export function TradeChart({ symbol, trades, onClose }: Props) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartApi = useRef<IChartApi | null>(null);
-  const [clicked, setClicked] = useState<ClickedPoint | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const candleRef = useRef<any>(null);
+  const rowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
 
-  // ── Data fetching ────────────────────────────────────────────────────────
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [selectedType, setSelectedType] = useState<"entry" | "exit">("exit");
+
+  // ── Data fetching ─────────────────────────────────────────────────────────
   const { data: barsData, isLoading: barsLoading } = useQuery({
     queryKey: ["bars", symbol, "5y"],
     queryFn: () => fetchBars(symbol, "5y"),
     retry: false,
   });
 
-  // Score is fetched lazily when a marker is clicked.
   const clickDate =
-    clicked?.type === "entry" ? clicked.trade.entry_date : clicked?.trade.exit_date;
+    selectedIdx !== null
+      ? selectedType === "entry"
+        ? trades[selectedIdx]?.entry_date
+        : trades[selectedIdx]?.exit_date
+      : undefined;
 
   const { data: auditData, isLoading: auditLoading } = useQuery({
     queryKey: ["signalAudit", symbol, clickDate],
     queryFn: () => fetchSignalAudit(symbol, clickDate!),
-    enabled: !!clicked,
+    enabled: !!clickDate,
     retry: false,
   });
 
-  // ── Cumulative P&L per trade index ───────────────────────────────────────
+  // ── Cumulative P&L ────────────────────────────────────────────────────────
   const cumulativePnls = trades.reduce<number[]>((acc, t) => {
     acc.push((acc[acc.length - 1] ?? 0) + t.pnl);
     return acc;
   }, []);
   const totalPnl = cumulativePnls[cumulativePnls.length - 1] ?? 0;
 
-  // ── Chart + markers ──────────────────────────────────────────────────────
+  // ── Build markers (with optional highlighting) ────────────────────────────
+  const buildMarkers = useCallback(
+    (selIdx: number | null) => {
+      const markers: Array<{
+        time: string;
+        position: "aboveBar" | "belowBar";
+        color: string;
+        shape: "arrowUp" | "arrowDown";
+        text: string;
+        size: number;
+      }> = [];
+
+      for (let i = 0; i < trades.length; i++) {
+        const t = trades[i];
+        const sel = i === selIdx;
+        markers.push({
+          time: t.entry_date,
+          position: "belowBar",
+          color: sel ? "#4ade80" : "#22c55e",
+          shape: "arrowUp",
+          text: `Buy $${t.entry_price.toFixed(2)}`,
+          size: sel ? 2 : 1,
+        });
+        markers.push({
+          time: t.exit_date,
+          position: "aboveBar",
+          color: sel ? "#f87171" : "#ef4444",
+          shape: "arrowDown",
+          text: `Sell $${t.exit_price.toFixed(2)}`,
+          size: sel ? 2 : 1,
+        });
+      }
+      markers.sort((a, b) => a.time.localeCompare(b.time));
+      return markers;
+    },
+    [trades]
+  );
+
+  // ── Main chart creation effect ─────────────────────────────────────────────
   useEffect(() => {
     if (!chartRef.current || !barsData?.bars.length) return;
 
@@ -72,6 +121,7 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
       chartApi.current.remove();
       chartApi.current = null;
     }
+    candleRef.current = null;
 
     const chart = createChart(chartRef.current, {
       layout: { background: { type: ColorType.Solid, color: BG }, textColor: TEXT },
@@ -84,15 +134,19 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
     });
     chartApi.current = chart;
 
-    // Candlestick
     const candle = chart.addCandlestickSeries({
-      upColor: "#22c55e", downColor: "#ef4444",
-      borderUpColor: "#22c55e", borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e", wickDownColor: "#ef4444",
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderUpColor: "#22c55e",
+      borderDownColor: "#ef4444",
+      wickUpColor: "#22c55e",
+      wickDownColor: "#ef4444",
     });
     candle.setData(barsData.bars.map((b) => ({ ...b, time: b.time as string })));
+    candleRef.current = candle;
+    // Set all markers immediately so they're visible as soon as the chart loads
+    candle.setMarkers(buildMarkers(null) as never);
 
-    // Volume overlay — bottom 20 %
     const volSeries = chart.addHistogramSeries({
       priceFormat: { type: "volume" },
       priceScaleId: "volume",
@@ -108,60 +162,29 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
       }))
     );
 
-    // Trade markers — sort by time (required by lightweight-charts)
-    const markers: Array<{
-      time: string;
-      position: "aboveBar" | "belowBar";
-      color: string;
-      shape: "arrowUp" | "arrowDown";
-      text: string;
-      size: number;
-    }> = [];
-
-    for (const t of trades) {
-      markers.push({
-        time: t.entry_date,
-        position: "belowBar",
-        color: "#22c55e",
-        shape: "arrowUp",
-        text: `Buy $${t.entry_price.toFixed(2)}`,
-        size: 1,
-      });
-      markers.push({
-        time: t.exit_date,
-        position: "aboveBar",
-        color: "#ef4444",
-        shape: "arrowDown",
-        text: `Sell $${t.exit_price.toFixed(2)}`,
-        size: 1,
-      });
-    }
-    markers.sort((a, b) => a.time.localeCompare(b.time));
-    candle.setMarkers(markers as never);
-
-    // Fit visible range to include all trades + a bit of context
     chart.timeScale().fitContent();
 
-    // Click handler — find nearest marked trade and surface details
     chart.subscribeClick((param) => {
-      if (!param.time) { setClicked(null); return; }
+      if (!param.time) {
+        setSelectedIdx(null);
+        return;
+      }
       const t = param.time as string;
-
-      // Prefer exit (shows P&L) over entry when same bar
       const exitIdx = trades.findIndex((tr) => tr.exit_date === t);
       if (exitIdx >= 0) {
-        setClicked({ trade: trades[exitIdx], type: "exit", cumulativePnl: cumulativePnls[exitIdx] });
+        setSelectedIdx(exitIdx);
+        setSelectedType("exit");
         return;
       }
       const entryIdx = trades.findIndex((tr) => tr.entry_date === t);
       if (entryIdx >= 0) {
-        setClicked({ trade: trades[entryIdx], type: "entry", cumulativePnl: cumulativePnls[entryIdx] });
+        setSelectedIdx(entryIdx);
+        setSelectedType("entry");
         return;
       }
-      setClicked(null);
+      setSelectedIdx(null);
     });
 
-    // Resize
     const ro = new ResizeObserver(() => {
       chartApi.current?.applyOptions({ width: chartRef.current?.clientWidth ?? 0 });
     });
@@ -171,13 +194,50 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
       ro.disconnect();
       chartApi.current?.remove();
       chartApi.current = null;
+      candleRef.current = null;
     };
   }, [barsData, trades]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Update markers when selection changes ──────────────────────────────────
+  useEffect(() => {
+    if (!candleRef.current) return;
+    candleRef.current.setMarkers(buildMarkers(selectedIdx) as never);
+  }, [selectedIdx, buildMarkers]);
+
+  // ── Zoom chart + scroll table row when selection changes ───────────────────
+  useEffect(() => {
+    if (selectedIdx === null || !barsData?.bars) return;
+
+    const trade = trades[selectedIdx];
+    const entryI = barsData.bars.findIndex((b) => b.time === trade.entry_date);
+    const exitI = barsData.bars.findIndex((b) => b.time === trade.exit_date);
+
+    if (entryI >= 0 && chartApi.current) {
+      const BUFFER = 15;
+      const from = Math.max(0, entryI - BUFFER);
+      const to = Math.min(
+        barsData.bars.length - 1,
+        (exitI >= 0 ? exitI : entryI) + BUFFER
+      );
+      chartApi.current.timeScale().setVisibleLogicalRange({ from, to });
+    }
+
+    rowRefs.current[selectedIdx]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [selectedIdx, barsData, trades]);
+
+  // ── Derived selected-trade data ────────────────────────────────────────────
+  const selected =
+    selectedIdx !== null
+      ? {
+          trade: trades[selectedIdx],
+          type: selectedType,
+          cumulativePnl: cumulativePnls[selectedIdx],
+        }
+      : null;
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
-
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
         <div className="flex items-center gap-3">
@@ -189,7 +249,9 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
           </button>
           <span className="text-slate-700">|</span>
           <span className="text-lg font-bold text-slate-100">{symbol}</span>
-          <span className="text-xs text-slate-500">{trades.length} trade{trades.length !== 1 ? "s" : ""}</span>
+          <span className="text-xs text-slate-500">
+            {trades.length} trade{trades.length !== 1 ? "s" : ""}
+          </span>
         </div>
         <div className="text-sm font-semibold font-mono">
           <span className="text-slate-500 text-xs font-normal mr-1">Total P&L</span>
@@ -208,80 +270,86 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
         <>
           <div className="px-4 py-1.5 text-[10px] text-slate-600 border-b border-slate-800">
             Click a <span className="text-emerald-400 font-semibold">▲ buy</span> or{" "}
-            <span className="text-red-400 font-semibold">▼ sell</span> marker to view trade details
+            <span className="text-red-400 font-semibold">▼ sell</span> marker — or click
+            a table row — to highlight and zoom
           </div>
           <div ref={chartRef} />
         </>
       )}
 
-      {/* Clicked-marker detail panel */}
-      {clicked && (
+      {/* Detail panel */}
+      {selected && (
         <div className="border-t border-slate-700 px-4 py-4 space-y-4">
           <div className="flex items-start justify-between">
             <div className="space-y-3 flex-1">
               <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                {clicked.type === "entry" ? "🟢 Buy point" : "🔴 Sell point"}
+                {selected.type === "entry" ? "🟢 Buy point" : "🔴 Sell point"}
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                {/* Date */}
                 <div>
                   <p className="text-[10px] text-slate-500 uppercase mb-0.5">Date</p>
                   <p className="text-sm font-mono text-slate-200">
-                    {clicked.type === "entry" ? clicked.trade.entry_date : clicked.trade.exit_date}
+                    {selected.type === "entry"
+                      ? selected.trade.entry_date
+                      : selected.trade.exit_date}
                   </p>
                 </div>
-
-                {/* Price */}
                 <div>
                   <p className="text-[10px] text-slate-500 uppercase mb-0.5">Price</p>
                   <p className="text-sm font-mono text-slate-200">
-                    ${(clicked.type === "entry"
-                      ? clicked.trade.entry_price
-                      : clicked.trade.exit_price
+                    ${(selected.type === "entry"
+                      ? selected.trade.entry_price
+                      : selected.trade.exit_price
                     ).toFixed(2)}
                   </p>
                 </div>
-
-                {/* Entry-specific: shares + stop */}
-                {clicked.type === "entry" && (
+                {selected.type === "entry" && (
                   <>
                     <div>
                       <p className="text-[10px] text-slate-500 uppercase mb-0.5">Shares</p>
                       <p className="text-sm font-mono text-slate-200">
-                        {clicked.trade.shares.toFixed(2)}
+                        {selected.trade.shares.toFixed(2)}
                       </p>
                     </div>
                     <div>
-                      <p className="text-[10px] text-slate-500 uppercase mb-0.5">Initial stop</p>
+                      <p className="text-[10px] text-slate-500 uppercase mb-0.5">Initial Stop</p>
                       <p className="text-sm font-mono text-slate-200">
-                        ${clicked.trade.initial_stop.toFixed(2)}
+                        ${selected.trade.initial_stop.toFixed(2)}
                       </p>
                     </div>
                   </>
                 )}
-
-                {/* Exit-specific: trade P&L + cumulative */}
-                {clicked.type === "exit" && (
+                {selected.type === "exit" && (
                   <>
                     <div>
                       <p className="text-[10px] text-slate-500 uppercase mb-0.5">Trade P&L</p>
-                      <p className={`text-sm font-mono font-semibold ${clicked.trade.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {fmtMoney(clicked.trade.pnl)}{" "}
+                      <p
+                        className={`text-sm font-mono font-semibold ${
+                          selected.trade.pnl >= 0 ? "text-emerald-400" : "text-red-400"
+                        }`}
+                      >
+                        {fmtMoney(selected.trade.pnl)}{" "}
                         <span className="text-xs font-normal">
-                          ({fmtPct(clicked.trade.pnl_pct)})
+                          ({fmtPct(selected.trade.pnl_pct)})
                         </span>
                       </p>
                     </div>
                     <div>
-                      <p className="text-[10px] text-slate-500 uppercase mb-0.5">Cumulative P&L</p>
-                      <p className={`text-sm font-mono font-semibold ${clicked.cumulativePnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {fmtMoney(clicked.cumulativePnl)}
+                      <p className="text-[10px] text-slate-500 uppercase mb-0.5">
+                        Cumulative P&L
+                      </p>
+                      <p
+                        className={`text-sm font-mono font-semibold ${
+                          selected.cumulativePnl >= 0 ? "text-emerald-400" : "text-red-400"
+                        }`}
+                      >
+                        {fmtMoney(selected.cumulativePnl)}
                       </p>
                     </div>
                     <div>
-                      <p className="text-[10px] text-slate-500 uppercase mb-0.5">Exit reason</p>
-                      <p className="text-sm text-slate-300 capitalize">
-                        {clicked.trade.exit_reason.replace(/_/g, " ")}
+                      <p className="text-[10px] text-slate-500 uppercase mb-0.5">Exit Reason</p>
+                      <p className="text-sm text-slate-300">
+                        {fmtExitReason(selected.trade.exit_reason)}
                       </p>
                     </div>
                   </>
@@ -289,14 +357,14 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
               </div>
             </div>
             <button
-              onClick={() => setClicked(null)}
+              onClick={() => setSelectedIdx(null)}
               className="text-slate-600 hover:text-slate-300 text-xl leading-none ml-4 mt-0.5"
             >
               ×
             </button>
           </div>
 
-          {/* Strategy score */}
+          {/* Strategy score on clicked date */}
           {auditLoading && (
             <p className="text-xs text-slate-600 animate-pulse">Loading strategy score…</p>
           )}
@@ -308,8 +376,13 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
               <div className="flex flex-wrap items-center gap-6">
                 <div>
                   <p className="text-[10px] text-slate-500 mb-0.5">Composite</p>
-                  <p className={`text-xl font-bold font-mono ${auditData.composite >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                    {auditData.composite >= 0 ? "+" : ""}{auditData.composite.toFixed(1)}
+                  <p
+                    className={`text-xl font-bold font-mono ${
+                      auditData.composite >= 0 ? "text-emerald-400" : "text-red-400"
+                    }`}
+                  >
+                    {auditData.composite >= 0 ? "+" : ""}
+                    {auditData.composite.toFixed(1)}
                   </p>
                 </div>
                 <div>
@@ -320,7 +393,11 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
                   {Object.entries(auditData.components).map(([key, val]) => (
                     <div key={key} className="text-center">
                       <p className="text-[9px] text-slate-600 uppercase mb-0.5">{key}</p>
-                      <p className={`text-xs font-mono ${val.sub >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      <p
+                        className={`text-xs font-mono ${
+                          val.sub >= 0 ? "text-emerald-400" : "text-red-400"
+                        }`}
+                      >
                         {val.sub.toFixed(0)}
                       </p>
                     </div>
@@ -353,13 +430,25 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
             {trades.map((t, i) => (
               <tr
                 key={i}
-                onClick={() => setClicked({ trade: t, type: "exit", cumulativePnl: cumulativePnls[i] })}
-                className={`border-b border-slate-800 cursor-pointer transition-colors hover:bg-slate-800/40 ${
-                  clicked?.trade === t ? "bg-slate-800/60" : ""
+                ref={(el) => {
+                  rowRefs.current[i] = el;
+                }}
+                onClick={() => {
+                  setSelectedIdx(i);
+                  setSelectedType("exit");
+                }}
+                className={`border-b border-slate-800 cursor-pointer transition-colors ${
+                  i === selectedIdx
+                    ? "bg-cyan-900/25 border-l-2 border-l-cyan-500"
+                    : "hover:bg-slate-800/40"
                 }`}
               >
                 <td className="px-4 py-2 text-slate-500 text-xs">{i + 1}</td>
-                <td className={`px-4 py-2 text-xs font-semibold ${t.side === "long" ? "text-emerald-400" : "text-red-400"}`}>
+                <td
+                  className={`px-4 py-2 text-xs font-semibold ${
+                    t.side === "long" ? "text-emerald-400" : "text-red-400"
+                  }`}
+                >
                   {t.side.toUpperCase()}
                 </td>
                 <td className="px-4 py-2 text-slate-400 text-xs">{t.entry_date}</td>
@@ -370,17 +459,29 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
                 <td className="px-4 py-2 text-right font-mono text-slate-300 text-xs">
                   ${t.exit_price.toFixed(2)}
                 </td>
-                <td className={`px-4 py-2 text-right font-mono font-semibold text-xs ${t.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                <td
+                  className={`px-4 py-2 text-right font-mono font-semibold text-xs ${
+                    t.pnl >= 0 ? "text-emerald-400" : "text-red-400"
+                  }`}
+                >
                   {fmtMoney(t.pnl)}
                 </td>
-                <td className={`px-4 py-2 text-right font-mono text-xs ${t.pnl_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                <td
+                  className={`px-4 py-2 text-right font-mono text-xs ${
+                    t.pnl_pct >= 0 ? "text-emerald-400" : "text-red-400"
+                  }`}
+                >
                   {fmtPct(t.pnl_pct)}
                 </td>
-                <td className={`px-4 py-2 text-right font-mono text-xs ${cumulativePnls[i] >= 0 ? "text-emerald-400/70" : "text-red-400/70"}`}>
+                <td
+                  className={`px-4 py-2 text-right font-mono text-xs ${
+                    cumulativePnls[i] >= 0 ? "text-emerald-400/70" : "text-red-400/70"
+                  }`}
+                >
                   {fmtMoney(cumulativePnls[i])}
                 </td>
                 <td className="px-4 py-2 text-xs text-slate-500">
-                  {t.exit_reason.replace(/_/g, " ")}
+                  {fmtExitReason(t.exit_reason)}
                 </td>
               </tr>
             ))}

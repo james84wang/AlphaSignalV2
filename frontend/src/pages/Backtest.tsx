@@ -2,16 +2,23 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { postBacktest, fetchBacktest } from "../lib/api";
 import { ProgressBar, type ProgressInfo } from "../components/ProgressBar";
 import { TradeChart } from "../components/TradeChart";
-import { fmtMoney, fmtPct } from "../lib/format";
-import type { BacktestResult, BacktestMetrics, TradeEntry } from "../lib/types";
-import { createChart, ColorType, CrosshairMode } from "lightweight-charts";
+import { fmtMoney } from "../lib/format";
+import type {
+  BacktestResult,
+  BacktestMetrics,
+  BenchmarkMetrics,
+  Comparison,
+  ConstraintCounts,
+  TradeEntry,
+} from "../lib/types";
+import { createChart, ColorType, CrosshairMode, LineStyle } from "lightweight-charts";
 
 const today = new Date().toISOString().slice(0, 10);
 const fiveYearsAgo = new Date(Date.now() - 5 * 365 * 24 * 60 * 60 * 1000)
   .toISOString()
   .slice(0, 10);
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Small reusable components ─────────────────────────────────────────────────
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
@@ -22,7 +29,62 @@ function MetricCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function EquityCurveChart({ data }: { data: Array<{ date: string; equity: number }> }) {
+function NumInput({
+  label,
+  value,
+  onChange,
+  step,
+  min,
+  suffix,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  step?: number;
+  min?: number;
+  suffix?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-xs text-slate-400 mb-1">{label}</label>
+      <div className="relative">
+        <input
+          type="number"
+          value={value}
+          step={step ?? 1}
+          min={min ?? 0}
+          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-cyan-500 pr-8"
+        />
+        {suffix && (
+          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-500 pointer-events-none">
+            {suffix}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-3">
+      {children}
+    </p>
+  );
+}
+
+// ── Equity curve chart (strategy + optional benchmark overlay) ────────────────
+
+function EquityCurveChart({
+  data,
+  benchmarkData,
+  benchmarkLabel,
+}: {
+  data: Array<{ date: string; equity: number }>;
+  benchmarkData?: Array<{ date: string; equity: number }>;
+  benchmarkLabel?: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,45 +102,179 @@ function EquityCurveChart({ data }: { data: Array<{ date: string; equity: number
       height: 240,
     });
 
-    const series = chart.addLineSeries({
+    const strategySeries = chart.addLineSeries({
       color: "#22d3ee",
       lineWidth: 2,
       priceLineVisible: false,
+      title: "Strategy",
     });
-    series.setData(data.map((d) => ({ time: d.date as string, value: d.equity })));
+    strategySeries.setData(data.map((d) => ({ time: d.date as string, value: d.equity })));
+
+    if (benchmarkData && benchmarkData.length > 0) {
+      const bkSeries = chart.addLineSeries({
+        color: "#64748b",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        priceLineVisible: false,
+        title: benchmarkLabel ?? "Benchmark",
+      });
+      bkSeries.setData(benchmarkData.map((d) => ({ time: d.date as string, value: d.equity })));
+    }
+
     chart.timeScale().fitContent();
 
     const ro = new ResizeObserver(() => {
       if (ref.current) chart.applyOptions({ width: ref.current.clientWidth });
     });
     ro.observe(ref.current);
-    return () => { ro.disconnect(); chart.remove(); };
-  }, [data]);
+    return () => {
+      ro.disconnect();
+      chart.remove();
+    };
+  }, [data, benchmarkData, benchmarkLabel]);
 
   return <div ref={ref} />;
 }
 
+// ── Metrics panels ────────────────────────────────────────────────────────────
+
 function MetricsDisplay({ metrics }: { metrics: BacktestMetrics }) {
   const pct = (n: number) => `${n.toFixed(1)}%`;
+  const winRate = metrics.win_rate ?? metrics.hit_rate;
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-      <MetricCard label="Total Return"   value={pct(metrics.total_return_pct)} />
-      <MetricCard label="CAGR"           value={pct(metrics.cagr)} />
-      <MetricCard label="Sharpe Ratio"   value={metrics.sharpe.toFixed(2)} />
-      <MetricCard label="Max Drawdown"   value={pct(metrics.max_drawdown_pct)} />
-      <MetricCard label="Hit Rate"       value={pct(metrics.hit_rate * 100)} />
-      <MetricCard label="Profit Factor"  value={metrics.profit_factor.toFixed(2)} />
-      <MetricCard label="Avg Win"        value={fmtMoney(metrics.avg_win)} />
-      <MetricCard label="Avg Loss"       value={fmtMoney(metrics.avg_loss)} />
-      <MetricCard label="# Trades"       value={String(metrics.n_trades)} />
-      <MetricCard label="Exposure"       value={pct(metrics.exposure_pct)} />
-      <MetricCard label="Final Equity"   value={fmtMoney(metrics.final_equity)} />
+    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+      <MetricCard label="Total Return"      value={pct(metrics.total_return_pct)} />
+      <MetricCard label="CAGR"              value={pct(metrics.cagr)} />
+      <MetricCard label="Sharpe Ratio"      value={metrics.sharpe.toFixed(2)} />
+      <MetricCard label="Max Drawdown"      value={pct(metrics.max_drawdown_pct)} />
+      <MetricCard label="Final Equity"      value={fmtMoney(metrics.final_equity)} />
+      <MetricCard label="Win Rate"          value={pct(winRate * 100)} />
+      <MetricCard label="Profit Factor"     value={metrics.profit_factor.toFixed(2)} />
+      <MetricCard label="Avg Win"           value={fmtMoney(metrics.avg_win)} />
+      <MetricCard label="Avg Loss"          value={fmtMoney(metrics.avg_loss)} />
+      <MetricCard label="# Trades"          value={String(metrics.n_trades)} />
+      <MetricCard label="Exposure"          value={pct(metrics.exposure_pct)} />
+      {metrics.win_loss_ratio !== undefined && (
+        <MetricCard label="Win / Loss Ratio" value={metrics.win_loss_ratio.toFixed(2)} />
+      )}
+      {metrics.total_fees !== undefined && (
+        <MetricCard label="Total Fees"       value={fmtMoney(metrics.total_fees)} />
+      )}
+      {metrics.turnover !== undefined && (
+        <MetricCard label="Annual Turnover"  value={pct(metrics.turnover * 100)} />
+      )}
+      {metrics.avg_holding_days !== undefined && (
+        <MetricCard label="Avg Hold (days)"  value={metrics.avg_holding_days.toFixed(1)} />
+      )}
     </div>
   );
 }
 
-// ── Grouped trade summary ─────────────────────────────────────────────────────
+function BenchmarkMetricsDisplay({ metrics }: { metrics: BenchmarkMetrics }) {
+  // Backend returns these already as percentages (e.g. 15.2, not 0.152)
+  const pct = (n: number) => `${n.toFixed(1)}%`;
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+      <MetricCard label="Total Return"  value={pct(metrics.total_return)} />
+      <MetricCard label="CAGR"          value={pct(metrics.cagr)} />
+      <MetricCard label="Sharpe Ratio"  value={metrics.sharpe_ratio.toFixed(2)} />
+      <MetricCard label="Max Drawdown"  value={pct(metrics.max_drawdown)} />
+      <MetricCard label="Final Equity"  value={fmtMoney(metrics.final_equity)} />
+    </div>
+  );
+}
+
+// ── Strategy vs Benchmark comparison table ────────────────────────────────────
+
+const METRIC_LABELS: Record<string, string> = {
+  total_return: "Total Return",
+  cagr: "CAGR",
+  sharpe_ratio: "Sharpe Ratio",
+  max_drawdown: "Max Drawdown",
+  final_equity: "Final Equity",
+};
+
+function formatComparisonVal(key: string, val: number): string {
+  if (key === "final_equity") return fmtMoney(val);
+  // Backend already returns these as percentages (e.g. 15.2, not 0.152)
+  if (["total_return", "cagr", "max_drawdown"].includes(key)) return `${val.toFixed(1)}%`;
+  return val.toFixed(2);
+}
+
+function ComparisonTable({
+  comparison,
+  benchmarkSymbol,
+}: {
+  comparison: Comparison;
+  benchmarkSymbol?: string;
+}) {
+  return (
+    <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-slate-700 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+        Strategy vs {benchmarkSymbol ?? "Benchmark"} (buy-and-hold)
+      </div>
+      <table className="w-full text-left">
+        <thead>
+          <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase font-medium">
+            <th className="px-4 py-2">Metric</th>
+            <th className="px-4 py-2 text-right text-cyan-500">Strategy</th>
+            <th className="px-4 py-2 text-right text-slate-400">{benchmarkSymbol ?? "Benchmark"}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(comparison.metrics).map(([key, row]) => (
+            <tr key={key} className="border-b border-slate-800/50">
+              <td className="px-4 py-2 text-xs text-slate-400">
+                {METRIC_LABELS[key] ?? key}
+              </td>
+              <td className="px-4 py-2 text-right text-sm font-mono text-slate-100">
+                {formatComparisonVal(key, row.strategy)}
+              </td>
+              <td className="px-4 py-2 text-right text-sm font-mono text-slate-400">
+                {formatComparisonVal(key, row.benchmark)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {comparison.fairness_caveat && (
+        <p className="px-4 py-2 text-[10px] text-slate-500 italic border-t border-slate-800">
+          {comparison.fairness_caveat}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Constraint counts chip ────────────────────────────────────────────────────
+
+function ConstraintChip({ counts }: { counts: ConstraintCounts }) {
+  const total = counts.skipped_no_slot + counts.skipped_no_capital + counts.skipped_top_n;
+  if (total === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+      <span className="text-slate-500">Skipped signals:</span>
+      {counts.skipped_top_n > 0 && (
+        <span className="rounded-full bg-amber-900/40 border border-amber-700/50 px-2.5 py-0.5 text-amber-400">
+          {counts.skipped_top_n} ranked-out
+        </span>
+      )}
+      {counts.skipped_no_slot > 0 && (
+        <span className="rounded-full bg-orange-900/40 border border-orange-700/50 px-2.5 py-0.5 text-orange-400">
+          {counts.skipped_no_slot} no-slot
+        </span>
+      )}
+      {counts.skipped_no_capital > 0 && (
+        <span className="rounded-full bg-red-900/40 border border-red-700/50 px-2.5 py-0.5 text-red-400">
+          {counts.skipped_no_capital} no-capital
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── Grouped trade table ───────────────────────────────────────────────────────
 
 interface SymbolStats {
   symbol: string;
@@ -94,7 +290,6 @@ interface SymbolStats {
 function buildGrouped(trades: TradeEntry[]): SymbolStats[] {
   const map: Record<string, TradeEntry[]> = {};
   for (const t of trades) {
-    // For short trades underlying_symbol is the stock; for longs symbol IS the stock.
     const key = t.underlying_symbol ?? t.symbol;
     if (!map[key]) map[key] = [];
     map[key].push(t);
@@ -152,34 +347,40 @@ function GroupedTradeTable({
                 key={s.symbol}
                 onClick={() => onSelect(s.symbol)}
                 className={`border-b border-slate-800 cursor-pointer transition-colors group ${
-                  isSelected
-                    ? "bg-slate-800/80"
-                    : "hover:bg-slate-800/40"
+                  isSelected ? "bg-slate-800/80" : "hover:bg-slate-800/40"
                 }`}
               >
                 <td className="px-4 py-3">
-                  <span className={`text-sm font-semibold transition-colors ${
-                    isSelected ? "text-cyan-300" : "text-slate-100 group-hover:text-cyan-300"
-                  }`}>
+                  <span
+                    className={`text-sm font-semibold transition-colors ${
+                      isSelected ? "text-cyan-300" : "text-slate-100 group-hover:text-cyan-300"
+                    }`}
+                  >
                     {s.symbol}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right text-sm text-slate-300 font-mono">
                   {s.nTrades}
                 </td>
-                <td className={`px-4 py-3 text-right text-sm font-mono ${
-                  winPct >= 50 ? "text-emerald-400" : "text-red-400"
-                }`}>
+                <td
+                  className={`px-4 py-3 text-right text-sm font-mono ${
+                    winPct >= 50 ? "text-emerald-400" : "text-red-400"
+                  }`}
+                >
                   {winPct.toFixed(0)}%
                 </td>
-                <td className={`px-4 py-3 text-right text-sm font-mono font-semibold ${
-                  s.totalPnl >= 0 ? "text-emerald-400" : "text-red-400"
-                }`}>
+                <td
+                  className={`px-4 py-3 text-right text-sm font-mono font-semibold ${
+                    s.totalPnl >= 0 ? "text-emerald-400" : "text-red-400"
+                  }`}
+                >
                   {fmtMoney(s.totalPnl)}
                 </td>
-                <td className={`px-4 py-3 text-right text-sm font-mono ${
-                  s.avgPnl >= 0 ? "text-emerald-400/80" : "text-red-400/80"
-                }`}>
+                <td
+                  className={`px-4 py-3 text-right text-sm font-mono ${
+                    s.avgPnl >= 0 ? "text-emerald-400/80" : "text-red-400/80"
+                  }`}
+                >
                   {fmtMoney(s.avgPnl)}
                 </td>
                 <td className="px-4 py-3 text-right text-sm font-mono text-emerald-400/70">
@@ -192,27 +393,31 @@ function GroupedTradeTable({
             );
           })}
         </tbody>
-        {/* Totals footer */}
-        {stats.length > 0 && (() => {
-          const grandTotal = stats.reduce((s, r) => s + r.totalPnl, 0);
-          const totalTrades = stats.reduce((s, r) => s + r.nTrades, 0);
-          const totalWins = stats.reduce((s, r) => s + r.nWins, 0);
-          return (
-            <tfoot>
-              <tr className="border-t border-slate-700 text-[10px] text-slate-500 uppercase font-semibold bg-slate-900/60">
-                <td className="px-4 py-2">Total</td>
-                <td className="px-4 py-2 text-right">{totalTrades}</td>
-                <td className="px-4 py-2 text-right">
-                  {((totalWins / totalTrades) * 100).toFixed(0)}%
-                </td>
-                <td className={`px-4 py-2 text-right font-mono ${grandTotal >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                  {fmtMoney(grandTotal)}
-                </td>
-                <td colSpan={3} />
-              </tr>
-            </tfoot>
-          );
-        })()}
+        {stats.length > 0 &&
+          (() => {
+            const grandTotal = stats.reduce((s, r) => s + r.totalPnl, 0);
+            const totalTrades = stats.reduce((s, r) => s + r.nTrades, 0);
+            const totalWins = stats.reduce((s, r) => s + r.nWins, 0);
+            return (
+              <tfoot>
+                <tr className="border-t border-slate-700 text-[10px] text-slate-500 uppercase font-semibold bg-slate-900/60">
+                  <td className="px-4 py-2">Total</td>
+                  <td className="px-4 py-2 text-right">{totalTrades}</td>
+                  <td className="px-4 py-2 text-right">
+                    {((totalWins / totalTrades) * 100).toFixed(0)}%
+                  </td>
+                  <td
+                    className={`px-4 py-2 text-right font-mono ${
+                      grandTotal >= 0 ? "text-emerald-400" : "text-red-400"
+                    }`}
+                  >
+                    {fmtMoney(grandTotal)}
+                  </td>
+                  <td colSpan={3} />
+                </tr>
+              </tfoot>
+            );
+          })()}
       </table>
     </div>
   );
@@ -221,11 +426,31 @@ function GroupedTradeTable({
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function Backtest() {
+  // Universe & period
   const [universe, setUniverse] = useState("watchlist");
   const [start, setStart] = useState(fiveYearsAgo);
   const [end, setEnd] = useState(today);
-  const [initialAccount, setInitialAccount] = useState(100_000);
 
+  // Capital
+  const [initialFund, setInitialFund] = useState(100_000);
+
+  // Platform fees
+  const [feePerShare, setFeePerShare] = useState(0.005);
+  const [feeMin, setFeeMin] = useState(1.0);
+  const [feeMaxPct, setFeeMaxPct] = useState(1.0); // displayed as %, sent as /100
+
+  // Position sizing
+  const [positionSizePct, setPositionSizePct] = useState(8); // displayed as %, sent as /100
+  const [positionSizeMin, setPositionSizeMin] = useState(2000);
+  const [perNameCapPct, setPerNameCapPct] = useState(30); // displayed as %, sent as /100
+  const [maxConcurrent, setMaxConcurrent] = useState(15);
+
+  // Risk & selection
+  const [atrStopMultiple, setAtrStopMultiple] = useState(1.5);
+  const [topN, setTopN] = useState(10);
+  const [benchmarkSymbol, setBenchmarkSymbol] = useState("QQQ");
+
+  // Run state
   const [jobId, setJobId] = useState<string | null>(null);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [polling, setPolling] = useState(false);
@@ -234,13 +459,11 @@ export function Backtest() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Group trades by underlying symbol once the result arrives
   const groupedStats = useMemo(
     () => (result?.trades ? buildGrouped(result.trades) : []),
     [result?.trades]
   );
 
-  // Trades for the selected symbol (for TradeChart)
   const selectedTrades = useMemo(() => {
     if (!selectedSymbol || !result?.trades) return [];
     return result.trades.filter(
@@ -260,7 +483,17 @@ export function Backtest() {
         universe,
         start,
         end,
-        initial_account: initialAccount,
+        initial_fund: initialFund,
+        fee_per_share: feePerShare,
+        fee_min: feeMin,
+        fee_max_pct_of_trade: feeMaxPct / 100,
+        position_size_pct: positionSizePct / 100,
+        position_size_min: positionSizeMin,
+        per_name_cap_pct: perNameCapPct / 100,
+        max_concurrent_positions: maxConcurrent,
+        atr_stop_multiple: atrStopMultiple,
+        top_n: topN,
+        benchmark_symbol: benchmarkSymbol,
       });
       setJobId(job.job_id);
       pollRef.current = setInterval(async () => {
@@ -296,11 +529,16 @@ export function Backtest() {
   }
 
   useEffect(() => {
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
 
+  const displayMetrics = result?.strategy_metrics ?? result?.metrics;
+  const bkSymbol = result?.params?.benchmark_symbol ?? benchmarkSymbol;
+
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
+    <div className="p-6 space-y-6">
       <div>
         <h1 className="text-xl font-bold text-slate-100">Backtest</h1>
         <p className="text-sm text-slate-500 mt-1">
@@ -309,10 +547,11 @@ export function Backtest() {
       </div>
 
       {/* ── Parameters form ── */}
-      <div className="bg-slate-900 rounded-xl border border-slate-700 p-5">
-        <h2 className="text-sm font-semibold text-slate-200 mb-4">Parameters</h2>
+      <div className="bg-slate-900 rounded-xl border border-slate-700 p-5 space-y-5">
+        <h2 className="text-sm font-semibold text-slate-200">Parameters</h2>
+
+        {/* Universe & Period */}
         <div className="grid grid-cols-2 gap-4">
-          {/* Universe */}
           <div>
             <label className="block text-xs text-slate-400 mb-1">Universe</label>
             <select
@@ -329,22 +568,20 @@ export function Backtest() {
             </select>
           </div>
 
-          {/* Initial account — text input so thousands commas render */}
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Initial Account ($)</label>
+            <label className="block text-xs text-slate-400 mb-1">Initial Fund ($)</label>
             <input
               type="text"
               inputMode="numeric"
-              value={initialAccount.toLocaleString("en-US")}
+              value={initialFund.toLocaleString("en-US")}
               onChange={(e) => {
                 const raw = e.target.value.replace(/[^0-9]/g, "");
-                setInitialAccount(raw ? parseInt(raw, 10) : 0);
+                setInitialFund(raw ? parseInt(raw, 10) : 0);
               }}
               className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-cyan-500"
             />
           </div>
 
-          {/* Start date */}
           <div>
             <label className="block text-xs text-slate-400 mb-1">Start Date</label>
             <input
@@ -355,7 +592,6 @@ export function Backtest() {
             />
           </div>
 
-          {/* End date */}
           <div>
             <label className="block text-xs text-slate-400 mb-1">End Date</label>
             <input
@@ -367,7 +603,97 @@ export function Backtest() {
           </div>
         </div>
 
-        <div className="mt-4 flex items-center gap-4">
+        {/* Platform Fees */}
+        <div className="border-t border-slate-800 pt-4">
+          <SectionLabel>Platform Fees</SectionLabel>
+          <div className="grid grid-cols-3 gap-4">
+            <NumInput
+              label="Fee / Share ($)"
+              value={feePerShare}
+              onChange={setFeePerShare}
+              step={0.001}
+            />
+            <NumInput
+              label="Min Fee ($)"
+              value={feeMin}
+              onChange={setFeeMin}
+              step={0.5}
+            />
+            <NumInput
+              label="Max Fee (% of trade)"
+              value={feeMaxPct}
+              onChange={setFeeMaxPct}
+              step={0.1}
+              suffix="%"
+            />
+          </div>
+        </div>
+
+        {/* Position Sizing */}
+        <div className="border-t border-slate-800 pt-4">
+          <SectionLabel>Position Sizing</SectionLabel>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <NumInput
+              label="Size (% of equity)"
+              value={positionSizePct}
+              onChange={setPositionSizePct}
+              step={1}
+              suffix="%"
+            />
+            <NumInput
+              label="Min Position ($)"
+              value={positionSizeMin}
+              onChange={setPositionSizeMin}
+              step={500}
+            />
+            <NumInput
+              label="Per-name Cap (% of fund)"
+              value={perNameCapPct}
+              onChange={setPerNameCapPct}
+              step={5}
+              suffix="%"
+            />
+            <NumInput
+              label="Max Concurrent"
+              value={maxConcurrent}
+              onChange={setMaxConcurrent}
+              step={1}
+              min={1}
+            />
+          </div>
+        </div>
+
+        {/* Risk & Selection */}
+        <div className="border-t border-slate-800 pt-4">
+          <SectionLabel>Risk &amp; Selection</SectionLabel>
+          <div className="grid grid-cols-3 gap-4">
+            <NumInput
+              label="ATR Stop Multiple"
+              value={atrStopMultiple}
+              onChange={setAtrStopMultiple}
+              step={0.1}
+            />
+            <NumInput
+              label="Top N by Score"
+              value={topN}
+              onChange={setTopN}
+              step={1}
+              min={1}
+            />
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Benchmark Ticker</label>
+              <input
+                type="text"
+                value={benchmarkSymbol}
+                onChange={(e) => setBenchmarkSymbol(e.target.value.toUpperCase())}
+                className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Run button */}
+        <div className="border-t border-slate-800 pt-4 flex items-center gap-4">
           <button
             onClick={handleRun}
             disabled={polling}
@@ -416,7 +742,7 @@ export function Backtest() {
       )}
 
       {/* ── Success results ── */}
-      {result && result.status === "done" && result.metrics && (
+      {result && result.status === "done" && displayMetrics && (
         <div className="space-y-6">
           {/* Survivorship warning */}
           {result.survivorship_note && (
@@ -430,23 +756,68 @@ export function Backtest() {
             <p className="text-xs text-slate-500">
               {result.params.start} → {result.params.end} ·{" "}
               {result.params.n_symbols_loaded} symbols · initial{" "}
-              {fmtMoney(result.params.initial_account)} ·{" "}
-              {result.duration_seconds?.toFixed(1)}s
+              {(result.params.initial_fund ?? result.params.initial_account ?? 0).toLocaleString(
+                "en-US",
+                { style: "currency", currency: "USD", maximumFractionDigits: 0 }
+              )}{" "}
+              · {result.duration_seconds?.toFixed(1)}s
             </p>
           )}
 
-          {/* Metrics */}
+          {/* Strategy metrics */}
           <div>
-            <h2 className="text-sm font-semibold text-slate-200 mb-3">Performance Metrics</h2>
-            <MetricsDisplay metrics={result.metrics} />
+            <h2 className="text-sm font-semibold text-slate-200 mb-3">Strategy Performance</h2>
+            <MetricsDisplay metrics={displayMetrics} />
           </div>
 
-          {/* Equity curve */}
+          {/* Benchmark metrics */}
+          {result.benchmark_metrics?.final_equity !== undefined && (
+            <div>
+              <h2 className="text-sm font-semibold text-slate-200 mb-3">
+                {bkSymbol} Buy-and-Hold Performance
+              </h2>
+              <BenchmarkMetricsDisplay metrics={result.benchmark_metrics} />
+            </div>
+          )}
+
+          {/* Constraint counts */}
+          {result.constraint_counts && (
+            <ConstraintChip counts={result.constraint_counts} />
+          )}
+
+          {/* Strategy vs Benchmark comparison */}
+          {result.comparison?.metrics && Object.keys(result.comparison.metrics).length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-slate-200 mb-3">
+                Strategy vs Benchmark
+              </h2>
+              <ComparisonTable comparison={result.comparison} benchmarkSymbol={bkSymbol} />
+            </div>
+          )}
+
+          {/* Equity curve (with benchmark overlay) */}
           {result.equity_curve && result.equity_curve.length > 0 && (
             <div>
-              <h2 className="text-sm font-semibold text-slate-200 mb-3">Equity Curve</h2>
+              <div className="flex items-center gap-4 mb-3">
+                <h2 className="text-sm font-semibold text-slate-200">Equity Curve</h2>
+                <div className="flex items-center gap-3 text-[10px] text-slate-500">
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-6 h-0.5 bg-cyan-400" /> Strategy
+                  </span>
+                  {result.benchmark_equity_curve && (
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block w-6 h-0.5 bg-slate-500 border-dashed" />{" "}
+                      {bkSymbol} buy-and-hold
+                    </span>
+                  )}
+                </div>
+              </div>
               <div className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden">
-                <EquityCurveChart data={result.equity_curve} />
+                <EquityCurveChart
+                  data={result.equity_curve}
+                  benchmarkData={result.benchmark_equity_curve}
+                  benchmarkLabel={bkSymbol}
+                />
               </div>
             </div>
           )}
@@ -455,10 +826,10 @@ export function Backtest() {
           {result.trades && result.trades.length > 0 && (
             <div className="space-y-4">
               <h2 className="text-sm font-semibold text-slate-200">
-                Trade Results — {groupedStats.length} symbol{groupedStats.length !== 1 ? "s" : ""}
+                Trade Results — {groupedStats.length} symbol
+                {groupedStats.length !== 1 ? "s" : ""}
               </h2>
 
-              {/* Symbol detail view (shown when a row is selected) */}
               {selectedSymbol && (
                 <TradeChart
                   key={selectedSymbol}
@@ -468,13 +839,10 @@ export function Backtest() {
                 />
               )}
 
-              {/* Grouped summary table — always visible, selected row highlighted */}
               <GroupedTradeTable
                 stats={groupedStats}
                 selectedSymbol={selectedSymbol}
-                onSelect={(sym) =>
-                  setSelectedSymbol((prev) => (prev === sym ? null : sym))
-                }
+                onSelect={(sym) => setSelectedSymbol((prev) => (prev === sym ? null : sym))}
               />
             </div>
           )}

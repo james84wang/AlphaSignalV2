@@ -200,6 +200,8 @@ export interface TradeEntry {
   pnl: number;
   pnl_pct: number;
   exit_reason: string;
+  entry_fee?: number;
+  exit_fee?: number;
   // Short-strategy fields (null for long trades)
   underlying_symbol?: string | null;
   trade_instrument?: string | null;
@@ -208,15 +210,49 @@ export interface TradeEntry {
 export interface BacktestMetrics {
   n_trades: number;
   hit_rate: number;
+  win_rate?: number;
   avg_win: number;
   avg_loss: number;
   profit_factor: number;
+  win_loss_ratio?: number;
   max_drawdown_pct: number;
+  max_drawdown?: number;
   sharpe: number;
+  sharpe_ratio?: number;
   cagr: number;
   total_return_pct: number;
+  total_return?: number;
   final_equity: number;
   exposure_pct: number;
+  total_fees?: number;
+  turnover?: number;
+  avg_holding_days?: number;
+}
+
+export interface BenchmarkMetrics {
+  total_return: number;
+  cagr: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  final_equity: number;
+}
+
+export interface ComparisonMetricRow {
+  strategy: number;
+  benchmark: number;
+}
+
+export interface Comparison {
+  metrics: Record<string, ComparisonMetricRow>;
+  fairness_caveat: string;
+  sharpe_convention: string;
+  price_basis: string;
+}
+
+export interface ConstraintCounts {
+  skipped_no_slot: number;
+  skipped_no_capital: number;
+  skipped_top_n: number;
 }
 
 export interface BacktestResult {
@@ -227,6 +263,7 @@ export interface BacktestResult {
   finished_at?: string;
   duration_seconds?: number;
   error?: string;
+  strategy?: string;
   // Progress fields (present while status === "running")
   n_done?: number;
   n_total?: number;
@@ -236,10 +273,29 @@ export interface BacktestResult {
     end: string;
     symbols: string[];
     n_symbols_loaded: number;
-    initial_account: number;
+    initial_fund?: number;
+    initial_account?: number;
+    position_size_pct?: number;
+    position_size_min?: number;
+    fee_per_share?: number;
+    fee_min?: number;
+    fee_max_pct_of_trade?: number;
+    atr_stop_multiple?: number;
+    atr_period?: number;
+    max_concurrent_positions?: number;
+    per_name_cap_pct?: number;
+    top_n?: number;
+    benchmark_symbol?: string;
+    risk_free_rate?: number;
+    price_basis?: string;
   };
   metrics?: BacktestMetrics;
+  strategy_metrics?: BacktestMetrics;
+  benchmark_metrics?: BenchmarkMetrics;
+  comparison?: Comparison;
   equity_curve?: Array<{ date: string; equity: number; n_open: number }>;
+  benchmark_equity_curve?: Array<{ date: string; equity: number; n_open: number }>;
+  constraint_counts?: ConstraintCounts;
   trades?: TradeEntry[];
   survivorship_note?: string;
 }

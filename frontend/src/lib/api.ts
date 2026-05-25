@@ -144,10 +144,23 @@ export function postBacktest(params: {
   symbols?: string[];
   start?: string;
   end?: string;
+  strategy?: string;
+  initial_fund?: number;
   initial_account?: number;
   slippage_pct?: number;
   commission?: number;
-  strategy?: string;
+  fee_per_share?: number;
+  fee_min?: number;
+  fee_max_pct_of_trade?: number;
+  position_size_pct?: number;
+  position_size_min?: number;
+  atr_stop_multiple?: number;
+  atr_period?: number;
+  max_concurrent_positions?: number;
+  per_name_cap_pct?: number;
+  top_n?: number;
+  benchmark_symbol?: string;
+  risk_free_rate?: number;
 }) {
   return post<BacktestJobResponse>("/api/backtest", params);
 }
