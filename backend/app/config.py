@@ -205,9 +205,31 @@ class RiskConfig(BaseModel):
 
 class BacktestConfig(BaseModel):
     start_years_back: int
-    initial_account: float
-    slippage_pct: float
-    commission_per_trade: float
+    initial_fund: float = 100000.0
+    slippage_pct: float = 0.001
+    commission_per_trade: float = 1.0
+    # MOD-F: Platform fee model
+    fee_per_share: float = 0.005
+    fee_min: float = 1.00
+    fee_max_pct_of_trade: float = 0.01
+    # MOD-F: Fixed-fractional sizing
+    position_size_pct: float = 0.08
+    position_size_min: float = 2000.0
+    # MOD-F: ATR stop (backtest-specific; separate from risk.stop_loss_atr_mult)
+    atr_stop_multiple: float = 1.5
+    atr_period: int = 14
+    # MOD-F: Portfolio constraints
+    max_concurrent_positions: int = 15
+    per_name_cap_pct: float = 0.30
+    top_n: int = 10
+    # MOD-F: Benchmark
+    benchmark_symbol: str = "QQQ"
+    risk_free_rate: float = 0.0
+
+    @property
+    def initial_account(self) -> float:
+        """Backward-compat alias for initial_fund."""
+        return self.initial_fund
 
 
 # ── Per-strategy profile ───────────────────────────────────────────────────────

@@ -76,3 +76,38 @@ and per-pattern scoring tables. The current PUT body only accepts the 8 componen
 
 **Frontend workaround in place:** Thresholds and scoring tables are displayed read-only with a
 note that editing requires the expanded PUT endpoint.
+
+---
+
+## MOD-F → Backtest page: new fields from portfolio engine
+
+The `GET /api/backtest/{job_id}` done response now includes MOD-F fields. The frontend
+`Backtest.tsx` should be updated to consume them:
+
+### New top-level response fields
+- `strategy_metrics` — full MOD-F metric set (replaces bare `metrics` for display).
+  New keys: `win_rate`, `win_loss_ratio`, `turnover`, `avg_holding_days`, `total_fees`,
+  `sharpe_ratio` (alias `sharpe`), `max_drawdown` (alias `max_drawdown_pct`).
+- `benchmark_metrics` — 5-metric set: `total_return`, `cagr`, `sharpe_ratio`, `max_drawdown`, `final_equity`.
+- `comparison` — side-by-side table: `{ metrics: { total_return: { strategy, benchmark }, ... }, fairness_caveat, sharpe_convention, price_basis }`.
+- `benchmark_equity_curve` — `[{date, equity, n_open}, ...]` for QQQ buy-and-hold overlay.
+- `constraint_counts` — `{ skipped_no_slot, skipped_no_capital, skipped_top_n }`.
+
+### Updated trade fields
+Each trade in `trades[]` now has `entry_fee` and `exit_fee` (float, USD).
+
+### Updated params fields
+`params.initial_fund` (was `initial_account`), plus new keys: `position_size_pct`,
+`position_size_min`, `fee_per_share`, `fee_min`, `fee_max_pct_of_trade`, `atr_stop_multiple`,
+`atr_period`, `max_concurrent_positions`, `per_name_cap_pct`, `top_n`,
+`benchmark_symbol`, `risk_free_rate`, `price_basis`.
+
+### Recommended UI additions
+1. **Strategy vs Benchmark table** — render `comparison.metrics` as a 3-column table
+   (Metric | Strategy | Benchmark). Add `fairness_caveat` as a footnote.
+2. **Benchmark equity curve overlay** — plot `benchmark_equity_curve` as a second line
+   on the equity chart (grey line labelled "QQQ buy-and-hold").
+3. **Extended metrics panel** — add `turnover`, `avg_holding_days`, `total_fees`,
+   `win_loss_ratio` alongside the existing metrics display.
+4. **Constraint counts chip** — show `constraint_counts` as a small info badge:
+   "Skipped: N slot / M capital / K ranked-out".

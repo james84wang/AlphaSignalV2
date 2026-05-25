@@ -388,7 +388,8 @@ Poll the status of a daily run job.
 
 ## POST /api/backtest
 
-Start a backtest run in the background.
+Start a backtest run in the background. MOD-F: portfolio-level simulation with fees,
+fixed-fractional sizing, ranked selection, and buy-and-hold benchmark.
 
 **Request body**
 ```json
@@ -397,20 +398,37 @@ Start a backtest run in the background.
   "symbols": ["AAPL", "MSFT"],
   "start": "2020-01-01",
   "end": "2025-01-01",
-  "initial_account": 100000,
+  "strategy": "long",
+  "initial_fund": 100000,
   "slippage_pct": 0.001,
-  "commission": 1.0,
-  "strategy": "long"
+  "fee_per_share": 0.005,
+  "fee_min": 1.00,
+  "fee_max_pct_of_trade": 0.01,
+  "position_size_pct": 0.08,
+  "position_size_min": 2000,
+  "atr_stop_multiple": 1.5,
+  "atr_period": 14,
+  "max_concurrent_positions": 15,
+  "per_name_cap_pct": 0.30,
+  "top_n": 10,
+  "benchmark_symbol": "QQQ",
+  "risk_free_rate": 0.0
 }
 ```
 
-`universe` and `symbols` are mutually exclusive; if `universe` is given, symbols are loaded from it.
-`start` and `end` default to `cfg.backtest.start_years_back` years ago → today.
-`initial_account`, `slippage_pct`, `commission` fall back to config defaults.
-`strategy` is `"long"` (default) or `"short"`. For `"short"`, the signal is computed on the
-underlying using the short profile, but the **trade** fills on the real inverse ETF from
-`data/inverse_etfs.csv`. Names with no mapped inverse ETF are reported under
-`coverage_report.skipped_no_instrument` and are NOT included in headline metrics.
+All params are optional and fall back to `config.yaml [backtest]` defaults.
+`initial_account` is accepted as a backward-compat alias for `initial_fund`.
+`universe` and `symbols` are mutually exclusive.
+`strategy` is `"long"` (default) or `"short"`.
+
+**Fee formula (per fill, charged on entry AND exit):**
+`fee = clamp(shares × fee_per_share, fee_min, fee_max_pct_of_trade × shares × fill_price)`
+
+**Sizing:** `target_$ = max(position_size_pct × equity, position_size_min)`, capped by `per_name_cap_pct × equity`. Skip if cash < target_$.
+
+**Ranked selection:** each bar, up to `top_n` candidates (by composite score) are considered for the `max_concurrent_positions` slot limit.
+
+**Benchmark:** buy `benchmark_symbol` at the first available open (one entry fee, no exit fee), hold to end. Total-return prices used for both sides.
 
 **Response 202**
 ```json
@@ -436,7 +454,7 @@ Poll status or retrieve the full result of a backtest job.
 }
 ```
 
-**Response 200 — done**
+**Response 200 — done (MOD-F)**
 ```json
 {
   "job_id": "d8e2f1a4",
@@ -447,52 +465,75 @@ Poll status or retrieve the full result of a backtest job.
   "finished_at": "2025-01-15T18:35:00+00:00",
   "duration_seconds": 300.4,
   "params": {
-    "strategy": "long",
-    "start": "2020-01-01",
-    "end": "2025-01-01",
-    "symbols": ["AAPL", "MSFT"],
-    "n_symbols_loaded": 2,
-    "initial_account": 100000
+    "strategy": "long", "start": "2020-01-01", "end": "2025-01-01",
+    "symbols": ["AAPL", "MSFT"], "n_symbols_loaded": 2,
+    "initial_fund": 100000, "position_size_pct": 0.08,
+    "max_concurrent_positions": 15, "top_n": 10,
+    "benchmark_symbol": "QQQ", "price_basis": "adjusted (total-return, dividends included)"
   },
-  "metrics": {
-    "n_trades": 47,
-    "hit_rate": 0.55,
-    "avg_win": 1240.50,
-    "avg_loss": -680.25,
-    "profit_factor": 1.82,
-    "max_drawdown_pct": 14.3,
-    "sharpe": 1.24,
+  "strategy_metrics": {
+    "n_trades": 47, "n_symbols": 15,
+    "win_rate": 0.55, "hit_rate": 0.55,
+    "avg_win": 1240.50, "avg_loss": -680.25,
+    "win_loss_ratio": 1.82, "profit_factor": 1.82,
+    "max_drawdown": 14.3, "max_drawdown_pct": 14.3,
+    "sharpe_ratio": 1.24, "sharpe": 1.24,
     "cagr": 18.6,
-    "total_return_pct": 134.2,
-    "final_equity": 234200.0,
-    "exposure_pct": 42.1
+    "total_return": 134.2, "total_return_pct": 134.2,
+    "final_equity": 234200.0, "exposure_pct": 42.1,
+    "turnover": 3.2, "avg_holding_days": 12.4, "total_fees": 1820.50
   },
+  "benchmark_metrics": {
+    "total_return": 89.5, "cagr": 13.5, "sharpe_ratio": 0.92,
+    "max_drawdown": 33.1, "final_equity": 189500.0
+  },
+  "comparison": {
+    "metrics": {
+      "total_return":  { "strategy": 134.2, "benchmark": 89.5 },
+      "cagr":          { "strategy": 18.6,  "benchmark": 13.5 },
+      "sharpe_ratio":  { "strategy": 1.24,  "benchmark": 0.92 },
+      "max_drawdown":  { "strategy": 14.3,  "benchmark": 33.1 },
+      "final_equity":  { "strategy": 234200.0, "benchmark": 189500.0 }
+    },
+    "fairness_caveat": "FAIRNESS CAVEAT: The strategy deploys at most 15 × 8% = 100% ...",
+    "sharpe_convention": "Daily returns, annualised by ×√252, risk_free_rate=0.",
+    "price_basis": "Adjusted / total-return prices (dividends included) via yfinance auto_adjust=True."
+  },
+  "metrics": { "...": "same as strategy_metrics (backward-compat alias)" },
   "equity_curve": [
     { "date": "2020-01-02", "equity": 100000.0, "n_open": 0 }
   ],
+  "benchmark_equity_curve": [
+    { "date": "2020-01-02", "equity": 99900.0, "n_open": 1 }
+  ],
   "trades": [
     {
-      "symbol": "AAPL",
-      "side": "long",
-      "entry_date": "2020-01-06",
-      "entry_price": 300.35,
-      "exit_date": "2020-01-20",
-      "exit_price": 318.73,
-      "shares": 33.2,
-      "initial_stop": 294.10,
-      "pnl": 610.50,
-      "pnl_pct": 6.12,
-      "exit_reason": "signal",
-      "underlying_symbol": null,
-      "trade_instrument": null,
-      "synthetic_pnl": null,
-      "synthetic_pnl_pct": null
+      "symbol": "AAPL", "side": "long",
+      "entry_date": "2020-01-06", "entry_price": 300.35,
+      "exit_date": "2020-01-20", "exit_price": 318.73,
+      "shares": 33.2, "initial_stop": 294.10,
+      "pnl": 610.50, "pnl_pct": 6.12, "exit_reason": "signal",
+      "entry_fee": 1.00, "exit_fee": 1.00,
+      "underlying_symbol": null, "trade_instrument": null,
+      "synthetic_pnl": null, "synthetic_pnl_pct": null
     }
   ],
+  "constraint_counts": {
+    "skipped_no_slot": 12,
+    "skipped_no_capital": 3,
+    "skipped_top_n": 45
+  },
   "survivorship_note": "SURVIVORSHIP BIAS WARNING: ...",
   "coverage_report": null
 }
 ```
+
+`strategy_metrics` contains the full MOD-F metric set. `metrics` is an alias (backward compat).
+`comparison.metrics` provides the side-by-side table for the 5 shared metrics.
+`constraint_counts` shows how many entry candidates were skipped and why:
+- `skipped_no_slot`: max_concurrent_positions was full
+- `skipped_no_capital`: insufficient cash (< target position size)
+- `skipped_top_n`: ranked below the top_n cutoff for that bar
 
 For `strategy="short"` runs, `coverage_report` is populated:
 
