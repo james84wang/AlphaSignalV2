@@ -158,6 +158,18 @@ cd frontend && npm run build
 cp -r dist/* ../backend/app/static/
 ```
 
+## Definition of Done
+
+Every change that affects **scope, data sources, strategy logic, or backtest behaviour**
+MUST update `docs/ABOUT.md` (relevant tab) and add a dated entry to the Changelog tab
+in the same commit. This keeps the About section current without manual auditing.
+
+Specifically:
+- New or changed data source → update Tab 1 (Overview & Scope, Data Sources table)
+- Changed strategy weights/thresholds/regime logic → update Tab 2 (Strategy Details)
+- Changed backtest parameters, fee model, or benchmark → update Tab 3 (Backtest Details)
+- Any of the above → add a dated entry at the top of Tab 4 (Changelog)
+
 ## Owner profile
 - Beginner programmer (≈2/10). Always explain manual steps as numbered,
   copy-paste-able Terminal commands.

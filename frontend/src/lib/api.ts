@@ -206,3 +206,9 @@ export function fetchSchedule() {
 export function putSchedule(enabled: boolean) {
   return put<ScheduleStatus>("/api/schedule", { enabled });
 }
+
+// ── About ─────────────────────────────────────────────────────────────────────
+
+export function fetchAbout() {
+  return get<{ content: string; last_updated: string }>("/api/about");
+}

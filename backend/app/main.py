@@ -25,6 +25,7 @@ from backend.app.api.watchlist import router as watchlist_router
 from backend.app.api.inverse_etfs_routes import router as inverse_etfs_router
 from backend.app.api.market import router as market_router
 from backend.app.api.schedule import router as schedule_router
+from backend.app.api.about import router as about_router
 from backend.app.scheduler import init_scheduler, shutdown_scheduler
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,7 @@ app.include_router(watchlist_router)
 app.include_router(inverse_etfs_router)
 app.include_router(market_router)
 app.include_router(schedule_router)
+app.include_router(about_router)
 
 
 @app.get("/health", tags=["meta"])
