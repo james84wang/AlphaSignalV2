@@ -12,11 +12,11 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.app.api.jobs import create_job, fail_job, finish_job, get_job
+from backend.app.api.jobs import create_job, fail_job, finish_job, get_job, update_job_progress
 from backend.app.backtest.engine import run_backtest
 from backend.app.config import load_config
 from backend.app.data.cache import ParquetCache
-from backend.app.data.universe import Universe, fetch_sp400_symbols, fetch_sp600_symbols
+from backend.app.data.universe import Universe, fetch_nasdaq100_symbols, fetch_sp400_symbols, fetch_sp600_symbols
 from backend.app.data.yfinance_provider import YFinanceProvider
 from backend.app.db.backtest_models import save_backtest_result
 from backend.app.db.models import config_hash
@@ -53,8 +53,8 @@ def start_backtest(body: BacktestRequest) -> dict:
         universe_name = None
     else:
         universe_name = body.universe or "watchlist"
-        if universe_name not in ("watchlist", "sp500", "combined", "midcap", "smallcap"):
-            raise HTTPException(422, detail="universe must be 'watchlist', 'sp500', 'combined', 'midcap', or 'smallcap'")
+        if universe_name not in ("watchlist", "sp500", "combined", "midcap", "smallcap", "nasdaq100"):
+            raise HTTPException(422, detail="universe must be 'watchlist', 'sp500', 'combined', 'midcap', 'smallcap', or 'nasdaq100'")
 
     # Resolve dates.
     end_date = date.fromisoformat(body.end) if body.end else date.today()
@@ -101,7 +101,7 @@ def get_backtest_status(job_id: str) -> dict:
     base = {"job_id": job.id, "status": job.status, "started_at": job.started_at}
 
     if job.status == "running":
-        return base
+        return {**base, "n_done": job.n_done, "n_total": job.n_total, "phase": job.phase}
 
     if job.status == "error":
         return {**base, "finished_at": job.finished_at, "error": job.error}
@@ -139,6 +139,11 @@ def _run_backtest_task(
             wl = u.watchlist_symbols()
             sp600 = fetch_sp600_symbols()
             symbols = sorted(set(sp600) | set(wl))
+        elif universe_name == "nasdaq100":
+            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
+            wl = u.watchlist_symbols()
+            ndx = fetch_nasdaq100_symbols()
+            symbols = sorted(set(ndx) | set(wl))
         elif universe_name == "combined":
             u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=True, include_sp1000=True)
             symbols = u.symbols
@@ -155,6 +160,11 @@ def _run_backtest_task(
         def fetcher(sym: str, s: date, e: date):
             return cache.get_daily_bars(sym, s, e)
 
+        update_job_progress(job_id, 0, len(symbols), "Loading data")
+
+        def _progress_cb(n_done: int, n_total: int, phase: str) -> None:
+            update_job_progress(job_id, n_done, n_total, phase)
+
         t0 = time.perf_counter()
         result = run_backtest(
             symbols=symbols,
@@ -166,6 +176,7 @@ def _run_backtest_task(
             initial_account=body.initial_account,
             slippage_pct=body.slippage_pct,
             commission=body.commission,
+            progress_callback=_progress_cb,
         )
         duration = time.perf_counter() - t0
 

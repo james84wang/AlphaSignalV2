@@ -176,6 +176,10 @@ export interface DailyRunResponse {
   strategy?: string;
   date?: string;
   error?: string;
+  // Progress fields (present while status === "running")
+  n_done?: number;
+  n_total?: number;
+  phase?: string;
 }
 
 export interface BacktestJobResponse {
@@ -196,6 +200,9 @@ export interface TradeEntry {
   pnl: number;
   pnl_pct: number;
   exit_reason: string;
+  // Short-strategy fields (null for long trades)
+  underlying_symbol?: string | null;
+  trade_instrument?: string | null;
 }
 
 export interface BacktestMetrics {
@@ -220,6 +227,10 @@ export interface BacktestResult {
   finished_at?: string;
   duration_seconds?: number;
   error?: string;
+  // Progress fields (present while status === "running")
+  n_done?: number;
+  n_total?: number;
+  phase?: string;
   params?: {
     start: string;
     end: string;

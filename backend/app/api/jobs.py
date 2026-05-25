@@ -18,6 +18,10 @@ class Job:
     result: Any = None
     error: str = ""
     meta: dict = field(default_factory=dict)
+    # Progress tracking (updated by background workers while running)
+    n_done: int = 0
+    n_total: int = 0
+    phase: str = ""
 
 
 _store: dict[str, Job] = {}
@@ -41,6 +45,16 @@ def create_job(job_type: str, meta: dict | None = None) -> Job:
 def get_job(job_id: str) -> Job | None:
     with _lock:
         return _store.get(job_id)
+
+
+def update_job_progress(job_id: str, n_done: int, n_total: int, phase: str = "") -> None:
+    """Update the progress counters on a running job (thread-safe)."""
+    with _lock:
+        job = _store.get(job_id)
+        if job:
+            job.n_done = n_done
+            job.n_total = n_total
+            job.phase = phase
 
 
 def finish_job(job_id: str, result: Any) -> None:

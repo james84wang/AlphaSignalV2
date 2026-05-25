@@ -143,6 +143,9 @@ class _PendingEntry:
 
 # ── Engine ─────────────────────────────────────────────────────────────────────
 
+ProgressCallback = Callable[[int, int, str], None]
+
+
 def run_backtest(
     symbols: list[str],
     start: date,
@@ -154,6 +157,7 @@ def run_backtest(
     slippage_pct: float | None = None,
     commission: float | None = None,
     inverse_etf_map: dict[str, str] | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> BacktestResult:
     """Run a walk-forward backtest over *symbols* from *start* to *end*.
 
@@ -192,6 +196,7 @@ def run_backtest(
             slippage_pct=slippage_pct,
             commission=commission,
             inverse_etf_map=inverse_etf_map or _load_default_etf_map(),
+            progress_callback=progress_callback,
         )
 
     return _run_long_backtest(
@@ -203,6 +208,7 @@ def run_backtest(
         initial_account=initial_account,
         slippage_pct=slippage_pct,
         commission=commission,
+        progress_callback=progress_callback,
     )
 
 
@@ -217,13 +223,19 @@ def _run_long_backtest(
     initial_account: float,
     slippage_pct: float,
     commission: float,
+    progress_callback: ProgressCallback | None = None,
 ) -> BacktestResult:
     # ── 1. Load and pre-compute per-symbol data ────────────────────────────────
     sym_data: dict[str, _SymbolData] = {}
-    for sym in symbols:
+    n_syms = len(symbols)
+    for i, sym in enumerate(symbols):
+        if progress_callback:
+            progress_callback(i, n_syms, sym)
         sd = _load_symbol(sym, start, end, cfg, data_fetcher, strategy="long")
         if sd is not None:
             sym_data[sym] = sd
+    if progress_callback:
+        progress_callback(n_syms, n_syms, "Simulating")
 
     if not sym_data:
         logger.error("No symbols loaded — aborting long backtest")
@@ -283,13 +295,17 @@ def _run_short_backtest(
     slippage_pct: float,
     commission: float,
     inverse_etf_map: dict[str, str],
+    progress_callback: ProgressCallback | None = None,
 ) -> BacktestResult:
     coverage = CoverageReport()
 
     # ── 1. Classify and load each underlying ──────────────────────────────────
     short_data: dict[str, _ShortSymbolData] = {}
+    n_syms = len(symbols)
 
-    for sym in symbols:
+    for i, sym in enumerate(symbols):
+        if progress_callback:
+            progress_callback(i, n_syms, sym)
         if sym not in inverse_etf_map:
             coverage.skipped_no_instrument.append(sym)
             continue
@@ -393,6 +409,9 @@ def _run_short_backtest(
             overlap_dates=overlap,
             skipped_before_overlap=skipped_before,
         )
+
+    if progress_callback:
+        progress_callback(n_syms, n_syms, "Simulating")
 
     if not short_data:
         logger.warning("No short-side symbols are testable — returning coverage report only")

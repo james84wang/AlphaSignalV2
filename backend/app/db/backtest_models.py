@@ -91,9 +91,41 @@ class BacktestEquity(Base):
 
 
 def init_backtest_db(db_path: Path | str | None = None):
-    """Create backtest tables if they don't exist. Returns the engine."""
+    """Create backtest tables if they don't exist, and migrate any missing columns.
+
+    SQLAlchemy's create_all() only creates tables; it never alters existing ones.
+    This function additionally runs lightweight ALTER TABLE migrations so that
+    columns added to the model after the DB was first created are always present.
+    """
     engine = get_engine(db_path)
     Base.metadata.create_all(engine)
+
+    # ── Idempotent column migrations ──────────────────────────────────────────
+    # Maps table → list of (column_name, DDL_type_and_default) to add if absent.
+    _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+        "backtest_runs": [
+            ("strategy",      "VARCHAR NOT NULL DEFAULT 'long'"),
+            ("coverage_json", "VARCHAR"),
+        ],
+        "backtest_trades": [
+            ("underlying_symbol", "VARCHAR"),
+            ("trade_instrument",  "VARCHAR"),
+            ("synthetic_pnl",     "FLOAT"),
+            ("synthetic_pnl_pct", "FLOAT"),
+        ],
+    }
+    with engine.connect() as conn:
+        from sqlalchemy import text
+        for table, cols in _MIGRATIONS.items():
+            result = conn.execute(text(f"PRAGMA table_info({table})"))
+            existing_cols = {row[1] for row in result.fetchall()}
+            for col_name, col_def in cols:
+                if col_name not in existing_cols:
+                    conn.execute(
+                        text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
+                    )
+        conn.commit()
+
     return engine
 
 

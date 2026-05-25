@@ -75,6 +75,24 @@ export function ChartPanel({ bars }: Props) {
     });
     candle.setData(bars.map((b) => ({ ...b, time: b.time as string })));
 
+    // Volume overlay — occupies bottom 20% of the main panel
+    const volumeSeries = main.addHistogramSeries({
+      priceFormat: { type: "volume" },
+      priceScaleId: "volume",
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    main.priceScale("volume").applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+    });
+    volumeSeries.setData(
+      bars.map((b) => ({
+        time: b.time as string,
+        value: b.volume,
+        color: b.close >= b.open ? "#22c55e55" : "#ef444455",
+      }))
+    );
+
     for (const period of [20, 50, 100, 200]) {
       const data = computeEma(bars, period);
       if (data.length > 0) {

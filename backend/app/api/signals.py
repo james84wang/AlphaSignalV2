@@ -14,13 +14,13 @@ router = APIRouter(prefix="/api/signals", tags=["signals"])
 _SESSION = make_session_factory()
 
 
-_VALID_UNIVERSES = ("watchlist", "sp500", "combined", "midcap", "smallcap")
+_VALID_UNIVERSES = ("watchlist", "sp500", "combined", "midcap", "smallcap", "nasdaq100")
 
 
 @router.get("")
 def get_signals(
     date_param: str | None = Query(None, alias="date", description="YYYY-MM-DD"),
-    universe: str = Query("combined", description="watchlist | sp500 | combined | midcap | smallcap"),
+    universe: str = Query("combined", description="watchlist | sp500 | combined | midcap | smallcap | nasdaq100"),
 ) -> dict:
     """Return the ranked signal table from the most recent run matching the filters."""
     if universe not in _VALID_UNIVERSES:

@@ -12,12 +12,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from backend.app.api.jobs import create_job, fail_job, finish_job, get_job
+from backend.app.api.jobs import create_job, fail_job, finish_job, get_job, update_job_progress
 from backend.app.config import load_config
 from backend.app.data.cache import ParquetCache
 from backend.app.data.inverse_etfs import load_inverse_etf_map
 from backend.app.data.universe import (
     Universe,
+    fetch_nasdaq100_symbols,
     fetch_sp400_symbols,
     fetch_sp500_symbols,
     fetch_sp600_symbols,
@@ -37,7 +38,7 @@ _DB_PATH = _DATA_DIR / "signals.db"
 _WATCHLIST_PATH = _REPO_ROOT / "data" / "watchlist.csv"
 _HISTORY_DAYS = 400
 
-_VALID_UNIVERSES = ("watchlist", "sp500", "combined", "midcap", "smallcap")
+_VALID_UNIVERSES = ("watchlist", "sp500", "combined", "midcap", "smallcap", "nasdaq100")
 
 
 class DailyRunRequest(BaseModel):
@@ -85,7 +86,7 @@ def get_daily_run_status(job_id: str) -> dict:
     base = {"job_id": job.id, "status": job.status, "started_at": job.started_at}
 
     if job.status == "running":
-        return base
+        return {**base, "n_done": job.n_done, "n_total": job.n_total, "phase": job.phase}
 
     if job.status == "error":
         return {**base, "finished_at": job.finished_at, "error": job.error}
@@ -139,6 +140,14 @@ def _resolve_symbols(universe_name: str) -> list[str]:
             wl_db = u.watchlist_symbols()
         return sorted(set(sp600) | set(wl_db))
 
+    if universe_name == "nasdaq100":
+        ndx = fetch_nasdaq100_symbols()
+        wl_db = _get_watchlist_symbols_from_db()
+        if not wl_db:
+            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
+            wl_db = u.watchlist_symbols()
+        return sorted(set(ndx) | set(wl_db))
+
     # combined = sp500 ∪ sp1000 ∪ watchlist  (sp1000 = sp400 + sp600)
     sp500 = fetch_sp500_symbols()
     sp1000 = fetch_sp1000_symbols()
@@ -173,7 +182,8 @@ def _run_daily_task(job_id: str, universe_name: str, strategy_name: str, target_
         successes: list[dict] = []
         errors: list[str] = []
 
-        for symbol in symbols:
+        update_job_progress(job_id, 0, len(symbols), "Starting scan")
+        for i, symbol in enumerate(symbols):
             try:
                 df = cache.get_daily_bars(symbol, start_date, end_date)
                 if df.empty:
@@ -214,6 +224,8 @@ def _run_daily_task(job_id: str, universe_name: str, strategy_name: str, target_
             except Exception as exc:  # noqa: BLE001
                 logger.warning("[%s] daily run error: %s", symbol, exc)
                 errors.append(symbol)
+            finally:
+                update_job_progress(job_id, i + 1, len(symbols), symbol)
 
         now = datetime.now(timezone.utc)
 

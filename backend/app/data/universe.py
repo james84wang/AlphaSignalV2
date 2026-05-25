@@ -19,13 +19,15 @@ logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _DATA_DIR = _REPO_ROOT / "data"
-_SP500_CACHE = _DATA_DIR / "sp500.csv"
-_SP400_CACHE = _DATA_DIR / "sp400.csv"
-_SP600_CACHE = _DATA_DIR / "sp600.csv"
+_SP500_CACHE    = _DATA_DIR / "sp500.csv"
+_SP400_CACHE    = _DATA_DIR / "sp400.csv"
+_SP600_CACHE    = _DATA_DIR / "sp600.csv"
+_NASDAQ100_CACHE = _DATA_DIR / "nasdaq100.csv"
 
-_SP500_WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-_SP400_WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
-_SP600_WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies"
+_SP500_WIKI_URL    = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+_SP400_WIKI_URL    = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
+_SP600_WIKI_URL    = "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies"
+_NASDAQ100_WIKI_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"
 
 _WIKI_HEADERS = {
     "User-Agent": (
@@ -124,6 +126,11 @@ def fetch_sp400_symbols(force_refresh: bool = False) -> list[str]:
 def fetch_sp600_symbols(force_refresh: bool = False) -> list[str]:
     """Return S&P SmallCap 600 ticker symbols, fetching from Wikipedia once and caching."""
     return _fetch_wiki_symbols(_SP600_WIKI_URL, _SP600_CACHE, "S&P 600", force_refresh)
+
+
+def fetch_nasdaq100_symbols(force_refresh: bool = False) -> list[str]:
+    """Return NASDAQ-100 ticker symbols, fetching from Wikipedia once and caching."""
+    return _fetch_wiki_symbols(_NASDAQ100_WIKI_URL, _NASDAQ100_CACHE, "NASDAQ-100", force_refresh)
 
 
 def fetch_sp1000_symbols(force_refresh: bool = False) -> list[str]:

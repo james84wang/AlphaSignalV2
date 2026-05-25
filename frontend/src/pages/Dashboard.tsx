@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchSignals, postDailyRun, fetchDailyRun, fetchWatchlist, fetchInverseEtfs } from "../lib/api";
 import { MarketOverview } from "../components/MarketOverview";
 import { SignalBadge, compositeColor } from "../components/SignalBadge";
+import { ProgressBar, type ProgressInfo } from "../components/ProgressBar";
 import { LoadingState } from "../components/LoadingState";
 import { ErrorState } from "../components/ErrorState";
 import type { SignalEntry, InverseEtfMapResponse } from "../lib/types";
@@ -212,10 +213,13 @@ export function Dashboard() {
 
   const [longStatus, setLongStatus] = useState<RunStatus>("idle");
   const [shortStatus, setShortStatus] = useState<RunStatus>("idle");
+  const [longProgress, setLongProgress] = useState<ProgressInfo | null>(null);
+  const [shortProgress, setShortProgress] = useState<ProgressInfo | null>(null);
+  const [universe, setUniverse] = useState("combined");
 
   const { data: signals, isLoading: sigLoading, error: sigError, refetch: sigRefetch } = useQuery({
-    queryKey: ["signals", "combined"],
-    queryFn: () => fetchSignals({ universe: "combined" }),
+    queryKey: ["signals", universe],
+    queryFn: () => fetchSignals({ universe }),
     retry: false,
   });
 
@@ -232,23 +236,43 @@ export function Dashboard() {
   });
 
   const pollJob = useCallback(
-    (jobId: string, setStatus: (s: RunStatus) => void) => {
+    (
+      jobId: string,
+      setStatus: (s: RunStatus) => void,
+      setProgress: (p: ProgressInfo | null) => void,
+    ) => {
       const interval = setInterval(async () => {
         try {
           const result = await fetchDailyRun(jobId);
+          // Update progress whenever fields are present
+          if (
+            result.n_total !== undefined &&
+            result.n_done !== undefined &&
+            result.started_at !== undefined
+          ) {
+            setProgress({
+              nDone: result.n_done,
+              nTotal: result.n_total,
+              phase: result.phase ?? "",
+              startedAt: result.started_at,
+            });
+          }
           if (result.status === "done") {
             clearInterval(interval);
             setStatus("done");
+            setProgress(null);
             qc.invalidateQueries({ queryKey: ["signals"] });
             setTimeout(() => setStatus("idle"), 4000);
           } else if (result.status === "error") {
             clearInterval(interval);
             setStatus("error");
+            setProgress(null);
             setTimeout(() => setStatus("idle"), 5000);
           }
         } catch {
           clearInterval(interval);
           setStatus("error");
+          setProgress(null);
           setTimeout(() => setStatus("idle"), 5000);
         }
       }, 1500);
@@ -258,10 +282,12 @@ export function Dashboard() {
 
   async function handleRun(strategy: "long" | "short") {
     const setStatus = strategy === "long" ? setLongStatus : setShortStatus;
+    const setProgress = strategy === "long" ? setLongProgress : setShortProgress;
     try {
       setStatus("running");
-      const result = await postDailyRun({ universe: "combined", strategy });
-      pollJob(result.job_id, setStatus);
+      setProgress(null);
+      const result = await postDailyRun({ universe, strategy });
+      pollJob(result.job_id, setStatus, setProgress);
     } catch {
       setStatus("error");
       setTimeout(() => setStatus("idle"), 5000);
@@ -288,20 +314,47 @@ export function Dashboard() {
       <MarketOverview />
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Universe selector */}
+        <div className="flex items-center gap-3">
+          <label className="text-xs text-slate-400 shrink-0">Universe</label>
+          <select
+            value={universe}
+            onChange={(e) => setUniverse(e.target.value)}
+            className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-cyan-500"
+          >
+            <option value="watchlist">Watchlist</option>
+            <option value="sp500">S&amp;P 500</option>
+            <option value="nasdaq100">NASDAQ-100</option>
+            <option value="midcap">S&amp;P MidCap 400</option>
+            <option value="smallcap">S&amp;P SmallCap 600</option>
+            <option value="combined">Full Universe (S&amp;P 500/400/600 + Watchlist)</option>
+          </select>
+        </div>
+
         {/* Run buttons */}
         <div className="flex gap-3">
-          <RunButton
-            label="Run Long Signals"
-            strategy="long"
-            status={longStatus}
-            onRun={() => handleRun("long")}
-          />
-          <RunButton
-            label="Run Short Signals"
-            strategy="short"
-            status={shortStatus}
-            onRun={() => handleRun("short")}
-          />
+          <div className="flex-1 space-y-2">
+            <RunButton
+              label="Run Long Signals"
+              strategy="long"
+              status={longStatus}
+              onRun={() => handleRun("long")}
+            />
+            {longStatus === "running" && longProgress && (
+              <ProgressBar {...longProgress} />
+            )}
+          </div>
+          <div className="flex-1 space-y-2">
+            <RunButton
+              label="Run Short Signals"
+              strategy="short"
+              status={shortStatus}
+              onRun={() => handleRun("short")}
+            />
+            {shortStatus === "running" && shortProgress && (
+              <ProgressBar {...shortProgress} />
+            )}
+          </div>
         </div>
 
         {/* Signals meta */}
