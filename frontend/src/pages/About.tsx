@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { marked } from "marked";
 import { fetchAbout } from "../lib/api";
@@ -7,7 +7,8 @@ import { useLang } from "../lib/LanguageContext";
 const TAB_SPLIT = "<!-- TAB_SPLIT -->";
 
 interface Tab {
-  id: string;
+  // Use numeric index as key to avoid Chinese-text → all-hyphens collisions
+  index: number;
   label: string;
   html: string;
 }
@@ -25,13 +26,12 @@ function parseTabs(markdown: string): Tab[] {
     if (!match) continue;
 
     const label = match[1].trim();
-    const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
     // Strip the heading line itself so it's not doubled in the rendered content
     const body = trimmed.replace(/^##\s+.+\n?/, "").trim();
     const html = marked.parse(body) as string;
 
-    tabs.push({ id, label, html });
+    tabs.push({ index: tabs.length, label, html });
   }
 
   return tabs;
@@ -41,10 +41,18 @@ export function About() {
   const [activeTab, setActiveTab] = useState(0);
   const { lang, t } = useLang();
 
+  // Reset to first tab whenever the language changes
+  useEffect(() => {
+    setActiveTab(0);
+  }, [lang]);
+
   const { data, isLoading, isError } = useQuery({
     queryKey: ["about", lang],
     queryFn: () => fetchAbout(lang),
-    staleTime: 5 * 60 * 1000,
+    // No staleTime — always re-fetch when lang changes so we never show
+    // a stale response from the other language while the new one loads.
+    staleTime: 0,
+    gcTime: 5 * 60 * 1000,
   });
 
   const tabs = data ? parseTabs(data.content) : [];
@@ -80,7 +88,7 @@ export function About() {
         <div className="flex gap-1">
           {tabs.map((tab, i) => (
             <button
-              key={tab.id}
+              key={tab.index}
               onClick={() => setActiveTab(i)}
               className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors border-b-2 ${
                 i === activeTab
