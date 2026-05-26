@@ -247,6 +247,8 @@ AlphaSignal 实现了两种互补的波段交易策略 — **多头**（顺势�
 
 ### v0.1.0 — 2026年5月
 
+**Mod-I（2026年5月）：** 策略优化器（含过拟合防护）——贝叶斯搜索（Optuna TPE）参数寻优，70/30样本内/样本外分割，4折走前验证（walk-forward），运气审计、扰动稳定性测试和顶部聚类检查。CLI：`uv run python scripts/optimize.py --strategy long`。最优参数保存至 `config.candidate.long.yaml` 供人工审核；`config.yaml` 不会被自动修改。
+
 **Mod-G补丁（2026年5月）：** 修正交易股票池表格 — 将纳斯达克100添加为可单独选择的股票池（与"全部股票池"分开）。添加中文版本支持（ABOUT.zh.md），实现双语UI切换。
 
 **Mod-G（2026年5月）：** 新增"关于"板块，包含四个标签页（概述与范围、策略详情、回测详情与局限性、更新日志）。以 `docs/ABOUT.md` 为唯一内容来源，通过 `GET /api/about` 实时渲染。在 CLAUDE.md 中添加定期更新规则以保持文档同步。

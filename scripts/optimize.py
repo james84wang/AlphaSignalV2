@@ -242,8 +242,8 @@ def main() -> None:
 
     print(f"\n  Best weights:")
     bw = result.best_strat_dict.get("weights", {})
-    for comp, w in sorted(bw.items(), key=lambda x: x[1], reverse=True):
-        print(f"    {comp:<14}: {w:.1f}%")
+    for comp, wval in sorted(bw.items(), key=lambda x: x[1], reverse=True):
+        print(f"    {comp:<14}: {wval:.1f}%")
 
     print(f"\n  Candidate config: {candidate_path}")
     print(f"  Report          : {report_path}")
