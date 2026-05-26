@@ -247,6 +247,8 @@ Entries are reverse-chronological (most recent first). Each mod corresponds to a
 
 ### v0.1.0 — May 2026
 
+**Mod-I (May 2026):** Strategy optimiser with overfitting protection — Bayesian (Optuna TPE) parameter search, 70/30 in-sample/holdout split, 4-fold walk-forward validation, luck audit, perturbation stability test, and top-cluster check. CLI: `uv run python scripts/optimize.py --strategy long`. Winning configs are saved to `config.candidate.long.yaml` for manual review; the live `config.yaml` is never auto-modified.
+
 **Mod-G patch (May 2026):** Corrected trading universe table — added NASDAQ 100 as a selectable universe (separately from "combined").
 
 **Mod-G (May 2026):** Added "About" section with four tabs (Overview & Scope, Strategy Details, Backtest Details & Limitations, Changelog). Single source of truth in `docs/ABOUT.md`, rendered live via `GET /api/about`. Added standing rule to CLAUDE.md to keep this document current.

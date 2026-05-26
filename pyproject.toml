@@ -21,6 +21,7 @@ dependencies = [
     "httpx>=0.27",       # used by TestClient
     "lxml>=5.0",         # required by pandas.read_html for Wikipedia scraping
     "apscheduler>=3.10", # daily signal scheduler
+    "optuna>=3.6",       # MOD-I: Bayesian optimizer
 ]
 
 [project.optional-dependencies]
