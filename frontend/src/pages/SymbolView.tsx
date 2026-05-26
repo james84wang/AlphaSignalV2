@@ -5,6 +5,7 @@ import { ChartPanel } from "../components/ChartPanel";
 import { AuditPanel } from "../components/AuditPanel";
 import { LoadingState } from "../components/LoadingState";
 import { ErrorState } from "../components/ErrorState";
+import { useLang } from "../lib/LanguageContext";
 
 const RANGES = ["1m", "3m", "6m", "1y", "2y", "5y"] as const;
 type Range = (typeof RANGES)[number];
@@ -14,6 +15,7 @@ import { useState } from "react";
 export function SymbolView() {
   const { symbol } = useParams<{ symbol: string }>();
   const navigate = useNavigate();
+  const { t } = useLang();
   const [range, setRange] = useState<Range>("1y");
 
   const barsQuery = useQuery({
@@ -48,7 +50,7 @@ export function SymbolView() {
           <h1 className="text-xl font-bold text-slate-100">{symbol}</h1>
           {barsQuery.data && (
             <p className="text-sm text-slate-500 mt-0.5">
-              {barsQuery.data.start} → {barsQuery.data.end} · {barsQuery.data.n_bars} bars
+              {barsQuery.data.start} → {barsQuery.data.end} · {barsQuery.data.n_bars} {t("bars_label")}
             </p>
           )}
         </div>
@@ -72,10 +74,10 @@ export function SymbolView() {
       </div>
 
       {/* Charts */}
-      {barsQuery.isLoading && <LoadingState label="Loading chart data…" />}
+      {barsQuery.isLoading && <LoadingState label={t("loading_chart")} />}
       {barsQuery.error && (
         <ErrorState
-          message={`Failed to load bars: ${(barsQuery.error as Error).message}`}
+          message={`${t("failed_bars")}: ${(barsQuery.error as Error).message}`}
           onRetry={() => barsQuery.refetch()}
         />
       )}
@@ -84,12 +86,12 @@ export function SymbolView() {
       {/* Audit panel */}
       <div>
         <h2 className="text-sm font-semibold text-slate-400 uppercase mb-3">
-          Score Breakdown — Latest Signal
+          {t("score_breakdown")}
         </h2>
-        {auditQuery.isLoading && <LoadingState label="Loading score breakdown…" />}
+        {auditQuery.isLoading && <LoadingState label={t("loading_score")} />}
         {auditQuery.error && (
           <ErrorState
-            message={`No signal data: ${(auditQuery.error as Error).message}`}
+            message={`${t("no_signal_data")}: ${(auditQuery.error as Error).message}`}
             onRetry={() => auditQuery.refetch()}
           />
         )}

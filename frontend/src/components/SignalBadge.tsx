@@ -1,3 +1,4 @@
+import { useLang } from "../lib/LanguageContext";
 import type { SignalLabel } from "../lib/types";
 
 const STYLES: Record<SignalLabel, string> = {
@@ -7,6 +8,14 @@ const STYLES: Record<SignalLabel, string> = {
   Sell: "bg-orange-500/20 text-orange-300 border-orange-500/40",
   "Strong Sell": "bg-red-500/20 text-red-300 border-red-500/40",
 };
+
+const SIGNAL_KEY = {
+  "Strong Buy": "signal_strong_buy",
+  Buy: "signal_buy",
+  Hold: "signal_hold",
+  Sell: "signal_sell",
+  "Strong Sell": "signal_strong_sell",
+} as const;
 
 export function signalColor(signal: SignalLabel): string {
   if (signal === "Strong Buy") return "text-emerald-400";
@@ -25,11 +34,12 @@ export function compositeColor(score: number): string {
 }
 
 export function SignalBadge({ signal }: { signal: SignalLabel }) {
+  const { t } = useLang();
   return (
     <span
       className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold border ${STYLES[signal]}`}
     >
-      {signal}
+      {t(SIGNAL_KEY[signal])}
     </span>
   );
 }

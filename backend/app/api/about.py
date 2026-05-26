@@ -1,11 +1,11 @@
-"""GET /api/about — serves docs/ABOUT.md with git last-updated date."""
+"""GET /api/about — serves docs/ABOUT.md (or ABOUT.zh.md) with git last-updated date."""
 from __future__ import annotations
 
 import logging
 import subprocess
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
@@ -13,7 +13,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["meta"])
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_ABOUT_MD = _REPO_ROOT / "docs" / "ABOUT.md"
+_DOCS = _REPO_ROOT / "docs"
+
+_FILES: dict[str, Path] = {
+    "en": _DOCS / "ABOUT.md",
+    "zh": _DOCS / "ABOUT.zh.md",
+}
 
 
 def _git_last_modified(path: Path) -> str | None:
@@ -32,9 +37,14 @@ def _git_last_modified(path: Path) -> str | None:
 
 
 @router.get("/api/about")
-def get_about() -> JSONResponse:
-    if not _ABOUT_MD.exists():
+def get_about(lang: str = Query("en", description="en | zh")) -> JSONResponse:
+    lang = lang if lang in _FILES else "en"
+    path = _FILES[lang]
+    if not path.exists():
+        # Fallback to English if the requested translation is missing
+        path = _FILES["en"]
+    if not path.exists():
         raise HTTPException(status_code=404, detail="About document not found")
-    content = _ABOUT_MD.read_text(encoding="utf-8")
-    last_updated = _git_last_modified(_ABOUT_MD) or "unknown"
+    content = path.read_text(encoding="utf-8")
+    last_updated = _git_last_modified(path) or _git_last_modified(_FILES["en"]) or "unknown"
     return JSONResponse({"content": content, "last_updated": last_updated})

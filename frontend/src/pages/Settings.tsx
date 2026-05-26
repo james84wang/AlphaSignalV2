@@ -7,6 +7,7 @@ import { ScheduleToggle } from "../components/ScheduleToggle";
 import { LoadingState } from "../components/LoadingState";
 import { ErrorState } from "../components/ErrorState";
 import { exportSettingsToExcel } from "../lib/exportSettings";
+import { useLang } from "../lib/LanguageContext";
 import type { ConfigWeights, ConfigThresholds, ConfigResponse, ScoringTablesUpdate } from "../lib/types";
 
 type Strategy = "long" | "short";
@@ -16,16 +17,6 @@ type Strategy = "long" | "short";
 const WEIGHT_KEYS: (keyof ConfigWeights)[] = [
   "candlestick", "p3", "p5", "volume", "ema", "sr", "macd", "rsi",
 ];
-const WEIGHT_LABELS: Record<keyof ConfigWeights, string> = {
-  candlestick: "Candlestick Pattern",
-  p3: "3-Bar Pattern",
-  p5: "5-Bar Pattern",
-  volume: "Volume",
-  ema: "EMA System",
-  sr: "Support / Resistance",
-  macd: "MACD",
-  rsi: "RSI",
-};
 
 function scoreColor(v: number) {
   return v > 0 ? "text-emerald-400" : v < 0 ? "text-red-400" : "text-slate-400";
@@ -79,11 +70,13 @@ function ScoreTableEditor({
 
 // ── Threshold editor ──────────────────────────────────────────────────────────
 
-const THRESHOLD_META: Array<[keyof ConfigThresholds, string, string]> = [
-  ["strong_buy",  "Strong Buy",  "text-emerald-400"],
-  ["buy",         "Buy",         "text-green-400"],
-  ["sell",        "Sell",        "text-orange-400"],
-  ["strong_sell", "Strong Sell", "text-red-400"],
+type ThresholdKey = keyof ConfigThresholds;
+
+const THRESHOLD_KEYS: Array<[ThresholdKey, string, string]> = [
+  ["strong_buy",  "signal_strong_buy",  "text-emerald-400"],
+  ["buy",         "signal_buy",         "text-green-400"],
+  ["sell",        "signal_sell",        "text-orange-400"],
+  ["strong_sell", "signal_strong_sell", "text-red-400"],
 ];
 
 function ThresholdEditor({
@@ -93,6 +86,8 @@ function ThresholdEditor({
   thresholds: ConfigThresholds;
   onChange: (t: ConfigThresholds) => void;
 }) {
+  const { t } = useLang();
+
   const ordered =
     thresholds.strong_sell < thresholds.sell &&
     thresholds.sell < 0 &&
@@ -108,9 +103,9 @@ function ThresholdEditor({
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-3">
-        {THRESHOLD_META.map(([key, label, cls]) => (
+        {THRESHOLD_KEYS.map(([key, labelKey, cls]) => (
           <div key={key} className="flex items-center justify-between bg-slate-800 rounded-lg px-4 py-2">
-            <span className={`text-sm font-semibold ${cls}`}>{label}</span>
+            <span className={`text-sm font-semibold ${cls}`}>{t(labelKey as Parameters<typeof t>[0])}</span>
             <input
               type="number"
               step={1}
@@ -123,13 +118,9 @@ function ThresholdEditor({
         ))}
       </div>
       {!ordered && (
-        <p className="text-xs text-red-400 mt-1">
-          Must satisfy: Strong Sell &lt; Sell &lt; 0 &lt; Buy &lt; Strong Buy
-        </p>
+        <p className="text-xs text-red-400 mt-1">{t("threshold_order_hint")}</p>
       )}
-      <p className="text-xs text-slate-600">
-        A composite score above "Buy" generates a Buy signal; below "Sell" generates a Sell signal.
-      </p>
+      <p className="text-xs text-slate-600">{t("threshold_desc")}</p>
     </div>
   );
 }
@@ -153,6 +144,7 @@ function scoringTablesFromConfig(config: ConfigResponse): ScoringTablesUpdate {
 
 function ProfileEditor({ strategy }: { strategy: Strategy }) {
   const qc = useQueryClient();
+  const { t } = useLang();
   const isLong = strategy === "long";
 
   const { data: config, isLoading, error, refetch } = useQuery({
@@ -222,11 +214,35 @@ function ProfileEditor({ strategy }: { strategy: Strategy }) {
     setSaveSuccess(false);
   }
 
-  if (isLoading) return <LoadingState label={`Loading ${strategy} config…`} />;
+  // Translated weight labels
+  const WEIGHT_I18N: Record<keyof ConfigWeights, string> = {
+    candlestick: t("wt_candlestick"),
+    p3: t("wt_p3"),
+    p5: t("wt_p5"),
+    volume: t("wt_volume"),
+    ema: t("wt_ema"),
+    sr: t("wt_sr"),
+    macd: t("wt_macd"),
+    rsi: t("wt_rsi"),
+  };
+
+  // Translated scoring table labels
+  const ST_LABELS: Record<keyof ScoringTablesUpdate, string> = {
+    candlestick: t("st_candlestick"),
+    p3: t("st_p3"),
+    p5: t("st_p5"),
+    ema_stacking: t("st_ema_stacking"),
+    ema_cross: t("st_ema_cross"),
+    sr: t("st_sr"),
+    macd: t("st_macd"),
+    rsi: t("st_rsi"),
+  };
+
+  if (isLoading) return <LoadingState label={t("loading")} />;
   if (error)
     return (
       <ErrorState
-        message={`Failed to load ${strategy} config: ${(error as Error).message}`}
+        message={`${t("error")}: ${(error as Error).message}`}
         onRetry={() => refetch()}
       />
     );
@@ -242,13 +258,12 @@ function ProfileEditor({ strategy }: { strategy: Strategy }) {
             : "border-red-600/50 bg-red-950/40"
         }`}>
           <p className={`text-sm ${isLong ? "text-emerald-300" : "text-red-300"}`}>
-            <strong>Unsaved changes</strong> to the{" "}
-            <strong className="uppercase">{strategy}</strong> profile. Saving will
-            invalidate prior {strategy} signals — re-run after saving.
+            <strong>{t("unsaved_changes")}</strong>{" "}
+            {isLong ? t("unsaved_desc_long") : t("unsaved_desc_short")}
           </p>
           <div className="flex items-center gap-3 flex-shrink-0">
             {saveSuccess && (
-              <span className="text-sm text-emerald-400 font-medium">Saved!</span>
+              <span className="text-sm text-emerald-400 font-medium">{t("saved")}</span>
             )}
             {saveMutation.error && (
               <span className="text-xs text-red-400 max-w-xs">
@@ -264,7 +279,7 @@ function ProfileEditor({ strategy }: { strategy: Strategy }) {
               }}
               className="px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 border border-slate-600 hover:border-slate-400 transition-colors"
             >
-              Reset
+              {t("reset")}
             </button>
             <button
               onClick={() => saveMutation.mutate()}
@@ -277,7 +292,7 @@ function ProfileEditor({ strategy }: { strategy: Strategy }) {
                   : "bg-cyan-600 text-white hover:bg-cyan-500"
               }`}
             >
-              {saveMutation.isPending ? "Saving…" : `Save ${isLong ? "Long" : "Short"} Profile`}
+              {saveMutation.isPending ? t("saving") : (isLong ? t("save_long") : t("save_short"))}
             </button>
           </div>
         </div>
@@ -286,15 +301,15 @@ function ProfileEditor({ strategy }: { strategy: Strategy }) {
       {/* ── Component Weights ── */}
       <div className="bg-slate-900 rounded-xl border border-slate-700 p-5 space-y-4">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-slate-200">Component Weights</h2>
+          <h2 className="text-sm font-semibold text-slate-200">{t("component_weights")}</h2>
           <span className={`text-sm font-mono font-bold ${weightsOk ? "text-emerald-400" : "text-red-400"}`}>
-            {weightTotal.toFixed(1)} / 100
+            {weightTotal.toFixed(1)} {t("weight_total")}
           </span>
         </div>
         {WEIGHT_KEYS.map((key) => (
           <div key={key} className="flex items-center gap-4">
             <label className="w-44 text-sm text-slate-300 flex-shrink-0">
-              {WEIGHT_LABELS[key]}
+              {WEIGHT_I18N[key]}
             </label>
             <input
               type="range"
@@ -322,54 +337,54 @@ function ProfileEditor({ strategy }: { strategy: Strategy }) {
 
       {/* ── Signal Thresholds ── */}
       <div className="bg-slate-900 rounded-xl border border-slate-700 p-5 space-y-3">
-        <h2 className="text-sm font-semibold text-slate-200">Signal Thresholds</h2>
+        <h2 className="text-sm font-semibold text-slate-200">{t("signal_thresholds")}</h2>
         <ThresholdEditor thresholds={thresholds} onChange={handleThresholdsChange} />
       </div>
 
       {/* ── Scoring Tables ── */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-200">Scoring Tables</h2>
-          <p className="text-xs text-slate-500">Values must be between −100 and +100</p>
+          <h2 className="text-sm font-semibold text-slate-200">{t("scoring_tables")}</h2>
+          <p className="text-xs text-slate-500">{t("scoring_range_hint")}</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <ScoreTableEditor
-            label="Candlestick Patterns"
+            label={ST_LABELS.candlestick}
             scores={scoringTables.candlestick!}
             onChange={(u) => handleTableChange("candlestick", u)}
           />
           <ScoreTableEditor
-            label="3-Bar Patterns (P3)"
+            label={ST_LABELS.p3}
             scores={scoringTables.p3!}
             onChange={(u) => handleTableChange("p3", u)}
           />
           <ScoreTableEditor
-            label="5-Bar Patterns (P5)"
+            label={ST_LABELS.p5}
             scores={scoringTables.p5!}
             onChange={(u) => handleTableChange("p5", u)}
           />
           <ScoreTableEditor
-            label="EMA Stacking"
+            label={ST_LABELS.ema_stacking}
             scores={scoringTables.ema_stacking!}
             onChange={(u) => handleTableChange("ema_stacking", u)}
           />
           <ScoreTableEditor
-            label="EMA Crossovers"
+            label={ST_LABELS.ema_cross}
             scores={scoringTables.ema_cross!}
             onChange={(u) => handleTableChange("ema_cross", u)}
           />
           <ScoreTableEditor
-            label="Support / Resistance"
+            label={ST_LABELS.sr}
             scores={scoringTables.sr!}
             onChange={(u) => handleTableChange("sr", u)}
           />
           <ScoreTableEditor
-            label="MACD Micro-signals"
+            label={ST_LABELS.macd}
             scores={scoringTables.macd!}
             onChange={(u) => handleTableChange("macd", u)}
           />
           <ScoreTableEditor
-            label="RSI Zones"
+            label={ST_LABELS.rsi}
             scores={scoringTables.rsi!}
             onChange={(u) => handleTableChange("rsi", u)}
           />
@@ -382,6 +397,7 @@ function ProfileEditor({ strategy }: { strategy: Strategy }) {
 // ── Export button ─────────────────────────────────────────────────────────────
 
 function ExportButton() {
+  const { t } = useLang();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -430,11 +446,9 @@ function ExportButton() {
             clipRule="evenodd"
           />
         </svg>
-        {busy ? "Exporting…" : "Export Settings (.xlsx)"}
+        {busy ? t("exporting") : t("export_xlsx")}
       </button>
-      <span className="text-xs text-slate-500">
-        Downloads both Long &amp; Short profiles in one Excel workbook
-      </span>
+      <span className="text-xs text-slate-500">{t("export_xlsx_desc")}</span>
       {err && <span className="text-xs text-red-400">{err}</span>}
     </div>
   );
@@ -444,16 +458,14 @@ function ExportButton() {
 
 export function Settings() {
   const [activeStrategy, setActiveStrategy] = useState<Strategy>("long");
+  const { t } = useLang();
 
   return (
     <div className="p-6 max-w-3xl space-y-10">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-100">Strategy Settings</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Two independent profiles — Long and Short. Edit weights, thresholds, and
-            scoring tables for each. Changes take effect on the next signal run.
-          </p>
+          <h1 className="text-xl font-bold text-slate-100">{t("settings_title")}</h1>
+          <p className="text-sm text-slate-500 mt-1">{t("settings_desc")}</p>
         </div>
         <ExportButton />
       </div>
@@ -473,7 +485,7 @@ export function Settings() {
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              {s === "long" ? "Long Profile" : "Short Profile"}
+              {s === "long" ? t("long_profile") : t("short_profile")}
             </button>
           ))}
         </div>
@@ -484,24 +496,24 @@ export function Settings() {
             : "border-red-500/40 bg-red-950/30 text-red-300"
         }`}>
           <span className={`w-2 h-2 rounded-full ${activeStrategy === "long" ? "bg-emerald-400" : "bg-red-400"}`} />
-          Editing: {activeStrategy === "long" ? "LONG" : "SHORT"} profile
+          {activeStrategy === "long" ? t("editing_long") : t("editing_short")}
         </div>
 
         <ProfileEditor key={activeStrategy} strategy={activeStrategy} />
       </div>
 
       <div className="border-t border-slate-800 pt-8 space-y-4">
-        <h2 className="text-base font-bold text-slate-100">Watchlist</h2>
+        <h2 className="text-base font-bold text-slate-100">{t("watchlist_title")}</h2>
         <WatchlistEditor />
       </div>
 
       <div className="border-t border-slate-800 pt-8 space-y-4">
-        <h2 className="text-base font-bold text-slate-100">Inverse-ETF Mapping</h2>
+        <h2 className="text-base font-bold text-slate-100">{t("inverse_etf_title")}</h2>
         <InverseEtfEditor />
       </div>
 
       <div className="border-t border-slate-800 pt-8 space-y-4">
-        <h2 className="text-base font-bold text-slate-100">Daily Schedule</h2>
+        <h2 className="text-base font-bold text-slate-100">{t("schedule_title")}</h2>
         <ScheduleToggle />
       </div>
     </div>

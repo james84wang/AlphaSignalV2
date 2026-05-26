@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchMarketOverview, fetchSparkline } from "../lib/api";
+import { useLang } from "../lib/LanguageContext";
 import type { IndexTile, FearAndGreed } from "../lib/types";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -16,6 +17,15 @@ function changeCls(pct: number | undefined) {
 function formatChange(pct: number) {
   return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
 }
+
+// Fear & Greed rating translation map
+const FG_RATING_ZH: Record<string, string> = {
+  "Extreme Fear": "极度恐惧",
+  "Fear": "恐惧",
+  "Neutral": "中性",
+  "Greed": "贪婪",
+  "Extreme Greed": "极度贪婪",
+};
 
 // ── Sparkline ─────────────────────────────────────────────────────────────────
 
@@ -65,13 +75,15 @@ function Sparkline({ symbol, positive }: { symbol: string; positive: boolean }) 
 // ── Index tile ────────────────────────────────────────────────────────────────
 
 function IndexCard({ tile }: { tile: IndexTile }) {
+  const { t } = useLang();
+
   if (tile.status === "unavailable") {
     return (
       <div className="flex flex-col items-center px-4 py-2 min-w-[100px]">
         <span className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 truncate max-w-[90px]">
           {tile.label}
         </span>
-        <span className="text-xs text-slate-600 italic">unavailable</span>
+        <span className="text-xs text-slate-600 italic">{t("unavailable")}</span>
         <div className="w-[80px] h-8 mt-1" />
       </div>
     );
@@ -141,11 +153,15 @@ const FG_LABEL_COLOR: Record<string, string> = {
 };
 
 function FearGreedGauge({ fg }: { fg: FearAndGreed }) {
+  const { t, lang } = useLang();
+
   if (fg.status === "unavailable") {
     return (
       <div className="flex flex-col items-center px-4 py-2 min-w-[130px]">
-        <span className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Fear & Greed</span>
-        <span className="text-xs text-slate-600 italic">unavailable</span>
+        <span className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+          {t("fear_greed")}
+        </span>
+        <span className="text-xs text-slate-600 italic">{t("unavailable")}</span>
       </div>
     );
   }
@@ -153,10 +169,15 @@ function FearGreedGauge({ fg }: { fg: FearAndGreed }) {
   const score = fg.score ?? 50;
   const needle = arcPt(score, R - 6);
   const ratingCls = fg.rating ? (FG_LABEL_COLOR[fg.rating] ?? "text-slate-300") : "text-slate-300";
+  const ratingLabel = fg.rating
+    ? (lang === "zh" ? (FG_RATING_ZH[fg.rating] ?? fg.rating) : fg.rating)
+    : "—";
 
   return (
     <div className="flex flex-col items-center px-3 py-1 min-w-[130px]">
-      <span className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Fear & Greed</span>
+      <span className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">
+        {t("fear_greed")}
+      </span>
 
       {/* SVG gauge */}
       <svg width="120" height="70" viewBox="0 0 120 70" className="-mt-1">
@@ -211,7 +232,7 @@ function FearGreedGauge({ fg }: { fg: FearAndGreed }) {
 
       {/* Rating label */}
       <span className={`text-[11px] font-semibold -mt-1 ${ratingCls}`}>
-        {fg.rating ?? "—"}
+        {ratingLabel}
       </span>
     </div>
   );
@@ -226,6 +247,7 @@ function Divider() {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function MarketOverview() {
+  const { t } = useLang();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["marketOverview"],
     queryFn: () => fetchMarketOverview(),
@@ -246,7 +268,7 @@ export function MarketOverview() {
   if (isError || !data) {
     return (
       <div className="bg-slate-900 border-b border-slate-800 px-6 py-2 text-xs text-slate-500 italic">
-        Market overview unavailable
+        {t("market_unavailable")}
       </div>
     );
   }

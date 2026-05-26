@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchSchedule, putSchedule } from "../lib/api";
 import { LoadingState } from "./LoadingState";
 import { ErrorState } from "./ErrorState";
+import { useLang } from "../lib/LanguageContext";
 
 function formatUtc(iso: string | null) {
   if (!iso) return "—";
@@ -17,6 +18,7 @@ function formatUtc(iso: string | null) {
 
 export function ScheduleToggle() {
   const qc = useQueryClient();
+  const { t } = useLang();
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["schedule"],
@@ -29,11 +31,11 @@ export function ScheduleToggle() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["schedule"] }),
   });
 
-  if (isLoading) return <LoadingState label="Loading schedule…" />;
+  if (isLoading) return <LoadingState label={t("loading")} />;
   if (error)
     return (
       <ErrorState
-        message={`Failed to load schedule: ${(error as Error).message}`}
+        message={`${t("error")}: ${(error as Error).message}`}
         onRetry={() => refetch()}
       />
     );
@@ -45,10 +47,11 @@ export function ScheduleToggle() {
     <div className="bg-slate-900 rounded-xl border border-slate-700 p-5 space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-sm font-semibold text-slate-200">Daily Auto-Run</h2>
+          <h2 className="text-sm font-semibold text-slate-200">{t("schedule_auto_run")}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Runs <strong className="text-slate-300">both</strong> long &amp; short strategies at{" "}
-            <span className="text-cyan-400 font-mono">{data.time} {data.tz}</span> each weekday.
+            {t("schedule_desc")}{" "}
+            <span className="text-cyan-400 font-mono">{data.time} {data.tz}</span>{" "}
+            {t("schedule_each_weekday")}
           </p>
         </div>
 
@@ -70,11 +73,11 @@ export function ScheduleToggle() {
 
       <div className="grid grid-cols-2 gap-3 text-xs">
         <div className="bg-slate-800 rounded-lg px-3 py-2">
-          <p className="text-slate-500 mb-0.5">Last run</p>
-          <p className="text-slate-200 font-mono">{data.last_run_date ?? "never"}</p>
+          <p className="text-slate-500 mb-0.5">{t("schedule_last_run")}</p>
+          <p className="text-slate-200 font-mono">{data.last_run_date ?? t("never")}</p>
         </div>
         <div className="bg-slate-800 rounded-lg px-3 py-2">
-          <p className="text-slate-500 mb-0.5">Next run</p>
+          <p className="text-slate-500 mb-0.5">{t("schedule_next_run")}</p>
           <p className="text-slate-200 font-mono">
             {data.enabled && data.next_run ? formatUtc(data.next_run) : "—"}
           </p>

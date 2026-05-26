@@ -209,6 +209,6 @@ export function putSchedule(enabled: boolean) {
 
 // ── About ─────────────────────────────────────────────────────────────────────
 
-export function fetchAbout() {
-  return get<{ content: string; last_updated: string }>("/api/about");
+export function fetchAbout(lang: "en" | "zh" = "en") {
+  return get<{ content: string; last_updated: string }>("/api/about", { lang });
 }

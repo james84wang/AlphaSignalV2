@@ -7,6 +7,7 @@ import { SignalBadge, compositeColor } from "../components/SignalBadge";
 import { ProgressBar, type ProgressInfo } from "../components/ProgressBar";
 import { LoadingState } from "../components/LoadingState";
 import { ErrorState } from "../components/ErrorState";
+import { useLang } from "../lib/LanguageContext";
 import type { SignalEntry, InverseEtfMapResponse } from "../lib/types";
 
 const COMPONENT_KEYS = ["candlestick", "p3", "p5", "volume", "ema", "sr", "macd", "rsi"] as const;
@@ -54,6 +55,7 @@ function SignalRow({
   runTimestamp?: string;
   onClick: () => void;
 }) {
+  const { t } = useLang();
   const etf = showInverseEtf ? inverseEtfLabel(entry, etfMap) : null;
   return (
     <tr
@@ -80,7 +82,7 @@ function SignalRow({
           {etf ? (
             <span className="font-mono font-semibold text-amber-300">{etf}</span>
           ) : (
-            <span className="text-slate-500 italic text-xs">no inverse ETF — discretionary</span>
+            <span className="text-slate-500 italic text-xs">{t("no_inverse_etf")}</span>
           )}
         </td>
       )}
@@ -118,6 +120,7 @@ function SectionTable({
   emptyMessage: string;
   onRowClick: (sym: string) => void;
 }) {
+  const { t } = useLang();
   return (
     <div className="bg-slate-900 rounded-xl border border-slate-700 overflow-x-auto">
       <div className={`px-4 py-2.5 border-b border-slate-700 flex items-center gap-2`}>
@@ -132,11 +135,11 @@ function SectionTable({
         <table className="w-full text-left min-w-[860px]">
           <thead>
             <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase font-medium">
-              <th className="px-4 py-2">#</th>
-              <th className="px-4 py-2">Symbol</th>
-              <th className="px-4 py-2 text-right">Score</th>
-              <th className="px-4 py-2 text-right">Signal</th>
-              {showInverseEtf && <th className="px-4 py-2">Inverse ETF</th>}
+              <th className="px-4 py-2">{t("col_rank")}</th>
+              <th className="px-4 py-2">{t("col_symbol")}</th>
+              <th className="px-4 py-2 text-right">{t("col_score")}</th>
+              <th className="px-4 py-2 text-right">{t("col_signal")}</th>
+              {showInverseEtf && <th className="px-4 py-2">{t("col_inverse_etf")}</th>}
               {COMPONENT_KEYS.map((k) => (
                 <th key={k} className="px-2 py-2 text-right">{COMPONENT_SHORT[k]}</th>
               ))}
@@ -171,6 +174,7 @@ function RunButton({
   status: RunStatus;
   onRun: () => void;
 }) {
+  const { t } = useLang();
   const isLong = strategy === "long";
   const baseColor = isLong
     ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
@@ -188,9 +192,9 @@ function RunButton({
 
   const labelMap = {
     idle: label,
-    running: "Running…",
-    done: "Done!",
-    error: "Error — retry?",
+    running: t("run_running"),
+    done: t("run_done"),
+    error: t("run_error"),
   };
 
   return (
@@ -210,6 +214,7 @@ const SHORT_SIGNALS: Array<"Sell" | "Strong Sell"> = ["Sell", "Strong Sell"];
 export function Dashboard() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { t } = useLang();
 
   const [longStatus, setLongStatus] = useState<RunStatus>("idle");
   const [shortStatus, setShortStatus] = useState<RunStatus>("idle");
@@ -244,7 +249,6 @@ export function Dashboard() {
       const interval = setInterval(async () => {
         try {
           const result = await fetchDailyRun(jobId);
-          // Update progress whenever fields are present
           if (
             result.n_total !== undefined &&
             result.n_done !== undefined &&
@@ -316,18 +320,18 @@ export function Dashboard() {
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {/* Universe selector */}
         <div className="flex items-center gap-3">
-          <label className="text-xs text-slate-400 shrink-0">Universe</label>
+          <label className="text-xs text-slate-400 shrink-0">{t("universe_label")}</label>
           <select
             value={universe}
             onChange={(e) => setUniverse(e.target.value)}
             className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-cyan-500"
           >
-            <option value="watchlist">Watchlist</option>
-            <option value="sp500">S&amp;P 500</option>
-            <option value="nasdaq100">NASDAQ-100</option>
-            <option value="midcap">S&amp;P MidCap 400</option>
-            <option value="smallcap">S&amp;P SmallCap 600</option>
-            <option value="combined">Full Universe (S&amp;P 500/400/600 + Watchlist)</option>
+            <option value="watchlist">{t("universe_watchlist")}</option>
+            <option value="sp500">{t("universe_sp500")}</option>
+            <option value="nasdaq100">{t("universe_nasdaq100")}</option>
+            <option value="midcap">{t("universe_midcap")}</option>
+            <option value="smallcap">{t("universe_smallcap")}</option>
+            <option value="combined">{t("universe_combined")}</option>
           </select>
         </div>
 
@@ -335,7 +339,7 @@ export function Dashboard() {
         <div className="flex gap-3">
           <div className="flex-1 space-y-2">
             <RunButton
-              label="Run Long Signals"
+              label={t("run_long")}
               strategy="long"
               status={longStatus}
               onRun={() => handleRun("long")}
@@ -346,7 +350,7 @@ export function Dashboard() {
           </div>
           <div className="flex-1 space-y-2">
             <RunButton
-              label="Run Short Signals"
+              label={t("run_short")}
               strategy="short"
               status={shortStatus}
               onRun={() => handleRun("short")}
@@ -360,12 +364,12 @@ export function Dashboard() {
         {/* Signals meta */}
         {signals && (
           <p className="text-xs text-slate-600">
-            Last run #{signals.run_id} · {signals.date} · {signals.n_signals} total signals
+            {t("last_run")} #{signals.run_id} · {signals.date} · {signals.n_signals} {t("total_signals")}
           </p>
         )}
 
         {sigLoading ? (
-          <LoadingState label="Loading signals…" />
+          <LoadingState label={t("loading")} />
         ) : sigError ? (
           (() => {
             const msg = (sigError as Error).message;
@@ -374,8 +378,8 @@ export function Dashboard() {
               <ErrorState
                 message={
                   is404
-                    ? "No signals yet. Use the Run buttons above to generate your first scan."
-                    : `Failed to load signals: ${msg}`
+                    ? t("no_signals_yet")
+                    : `${t("error")}: ${msg}`
                 }
                 onRetry={is404 ? undefined : () => sigRefetch()}
               />
@@ -385,44 +389,44 @@ export function Dashboard() {
           <>
             {/* Section 1 — Long */}
             <SectionTable
-              title="Long Signals — Swing Long"
+              title={t("section_long")}
               color="text-emerald-400"
               entries={longSignals}
               showInverseEtf={false}
               etfMap={etfMap}
               runTimestamp={signals?.run_timestamp}
-              emptyMessage="No Buy / Strong Buy signals from the last run. Run Long Signals to refresh."
+              emptyMessage={t("empty_long")}
               onRowClick={(sym) => navigate(`/symbol/${sym}`)}
             />
 
             {/* Section 2 — Short */}
             <SectionTable
-              title="Short Signals — Swing via Inverse ETF"
+              title={t("section_short")}
               color="text-red-400"
               entries={shortSignals}
               showInverseEtf={true}
               etfMap={etfMap}
               runTimestamp={signals?.run_timestamp}
-              emptyMessage="No Sell / Strong Sell signals from the last run. Run Short Signals to refresh."
+              emptyMessage={t("empty_short")}
               onRowClick={(sym) => navigate(`/symbol/${sym}`)}
             />
 
             {/* Section 3 — Watchlist */}
             <SectionTable
-              title="Watchlist Signals"
+              title={t("section_watchlist")}
               color="text-cyan-400"
               entries={watchlistSignals}
               showInverseEtf={true}
               etfMap={etfMap}
               runTimestamp={signals?.run_timestamp}
-              emptyMessage="None of your watchlist symbols appear in the latest signal run."
+              emptyMessage={t("empty_watchlist")}
               onRowClick={(sym) => navigate(`/symbol/${sym}`)}
             />
           </>
         )}
 
         <p className="text-xs text-slate-600">
-          Click any row to open the chart + full score audit for that symbol.
+          {t("click_row_hint")}
         </p>
       </div>
     </div>

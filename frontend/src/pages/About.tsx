@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { marked } from "marked";
 import { fetchAbout } from "../lib/api";
+import { useLang } from "../lib/LanguageContext";
 
 const TAB_SPLIT = "<!-- TAB_SPLIT -->";
 
@@ -38,10 +39,11 @@ function parseTabs(markdown: string): Tab[] {
 
 export function About() {
   const [activeTab, setActiveTab] = useState(0);
+  const { lang, t } = useLang();
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["about"],
-    queryFn: fetchAbout,
+    queryKey: ["about", lang],
+    queryFn: () => fetchAbout(lang),
     staleTime: 5 * 60 * 1000,
   });
 
@@ -50,7 +52,7 @@ export function About() {
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center text-slate-400">
-        Loading…
+        {t("loading")}
       </div>
     );
   }
@@ -58,7 +60,7 @@ export function About() {
   if (isError || !data) {
     return (
       <div className="flex-1 flex items-center justify-center text-red-400">
-        Failed to load About document.
+        {t("error")}
       </div>
     );
   }
@@ -68,9 +70,9 @@ export function About() {
       {/* Page header */}
       <div className="px-6 pt-5 pb-0 border-b border-slate-800">
         <div className="flex items-baseline justify-between mb-3">
-          <h1 className="text-lg font-semibold text-slate-100">About AlphaSignal</h1>
+          <h1 className="text-lg font-semibold text-slate-100">{t("about_title")}</h1>
           <span className="text-xs text-slate-500">
-            Last updated: {data.last_updated}
+            {t("last_updated")}: {data.last_updated}
           </span>
         </div>
 

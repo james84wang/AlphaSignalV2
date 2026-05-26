@@ -3,6 +3,7 @@ import { postBacktest, fetchBacktest } from "../lib/api";
 import { ProgressBar, type ProgressInfo } from "../components/ProgressBar";
 import { TradeChart } from "../components/TradeChart";
 import { fmtMoney } from "../lib/format";
+import { useLang } from "../lib/LanguageContext";
 import type {
   BacktestResult,
   BacktestMetrics,
@@ -80,10 +81,12 @@ function EquityCurveChart({
   data,
   benchmarkData,
   benchmarkLabel,
+  strategyLabel,
 }: {
   data: Array<{ date: string; equity: number }>;
   benchmarkData?: Array<{ date: string; equity: number }>;
   benchmarkLabel?: string;
+  strategyLabel?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -106,7 +109,7 @@ function EquityCurveChart({
       color: "#22d3ee",
       lineWidth: 2,
       priceLineVisible: false,
-      title: "Strategy",
+      title: strategyLabel ?? "Strategy",
     });
     strategySeries.setData(data.map((d) => ({ time: d.date as string, value: d.equity })));
 
@@ -131,7 +134,7 @@ function EquityCurveChart({
       ro.disconnect();
       chart.remove();
     };
-  }, [data, benchmarkData, benchmarkLabel]);
+  }, [data, benchmarkData, benchmarkLabel, strategyLabel]);
 
   return <div ref={ref} />;
 }
@@ -139,68 +142,55 @@ function EquityCurveChart({
 // ── Metrics panels ────────────────────────────────────────────────────────────
 
 function MetricsDisplay({ metrics }: { metrics: BacktestMetrics }) {
+  const { t } = useLang();
   const pct = (n: number) => `${n.toFixed(1)}%`;
   const winRate = metrics.win_rate ?? metrics.hit_rate;
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-      <MetricCard label="Total Return"      value={pct(metrics.total_return_pct)} />
-      <MetricCard label="CAGR"              value={pct(metrics.cagr)} />
-      <MetricCard label="Sharpe Ratio"      value={metrics.sharpe.toFixed(2)} />
-      <MetricCard label="Max Drawdown"      value={pct(metrics.max_drawdown_pct)} />
-      <MetricCard label="Final Equity"      value={fmtMoney(metrics.final_equity)} />
-      <MetricCard label="Win Rate"          value={pct(winRate * 100)} />
-      <MetricCard label="Profit Factor"     value={metrics.profit_factor.toFixed(2)} />
-      <MetricCard label="Avg Win"           value={fmtMoney(metrics.avg_win)} />
-      <MetricCard label="Avg Loss"          value={fmtMoney(metrics.avg_loss)} />
-      <MetricCard label="# Trades"          value={String(metrics.n_trades)} />
-      <MetricCard label="Exposure"          value={pct(metrics.exposure_pct)} />
+      <MetricCard label={t("m_total_return")}  value={pct(metrics.total_return_pct)} />
+      <MetricCard label={t("m_cagr")}           value={pct(metrics.cagr)} />
+      <MetricCard label={t("m_sharpe")}         value={metrics.sharpe.toFixed(2)} />
+      <MetricCard label={t("m_max_drawdown")}   value={pct(metrics.max_drawdown_pct)} />
+      <MetricCard label={t("m_final_equity")}   value={fmtMoney(metrics.final_equity)} />
+      <MetricCard label={t("m_win_rate")}       value={pct(winRate * 100)} />
+      <MetricCard label={t("m_profit_factor")}  value={metrics.profit_factor.toFixed(2)} />
+      <MetricCard label={t("m_avg_win")}        value={fmtMoney(metrics.avg_win)} />
+      <MetricCard label={t("m_avg_loss")}       value={fmtMoney(metrics.avg_loss)} />
+      <MetricCard label={t("m_n_trades")}       value={String(metrics.n_trades)} />
+      <MetricCard label={t("m_exposure")}       value={pct(metrics.exposure_pct)} />
       {metrics.win_loss_ratio !== undefined && (
-        <MetricCard label="Win / Loss Ratio" value={metrics.win_loss_ratio.toFixed(2)} />
+        <MetricCard label={t("m_win_loss_ratio")} value={metrics.win_loss_ratio.toFixed(2)} />
       )}
       {metrics.total_fees !== undefined && (
-        <MetricCard label="Total Fees"       value={fmtMoney(metrics.total_fees)} />
+        <MetricCard label={t("m_total_fees")}   value={fmtMoney(metrics.total_fees)} />
       )}
       {metrics.turnover !== undefined && (
-        <MetricCard label="Annual Turnover"  value={pct(metrics.turnover * 100)} />
+        <MetricCard label={t("m_turnover")}     value={pct(metrics.turnover * 100)} />
       )}
       {metrics.avg_holding_days !== undefined && (
-        <MetricCard label="Avg Hold (days)"  value={metrics.avg_holding_days.toFixed(1)} />
+        <MetricCard label={t("m_avg_hold")}     value={metrics.avg_holding_days.toFixed(1)} />
       )}
     </div>
   );
 }
 
 function BenchmarkMetricsDisplay({ metrics }: { metrics: BenchmarkMetrics }) {
+  const { t } = useLang();
   // Backend returns these already as percentages (e.g. 15.2, not 0.152)
   const pct = (n: number) => `${n.toFixed(1)}%`;
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-      <MetricCard label="Total Return"  value={pct(metrics.total_return)} />
-      <MetricCard label="CAGR"          value={pct(metrics.cagr)} />
-      <MetricCard label="Sharpe Ratio"  value={metrics.sharpe_ratio.toFixed(2)} />
-      <MetricCard label="Max Drawdown"  value={pct(metrics.max_drawdown)} />
-      <MetricCard label="Final Equity"  value={fmtMoney(metrics.final_equity)} />
+      <MetricCard label={t("m_total_return")} value={pct(metrics.total_return)} />
+      <MetricCard label={t("m_cagr")}         value={pct(metrics.cagr)} />
+      <MetricCard label={t("m_sharpe")}       value={metrics.sharpe_ratio.toFixed(2)} />
+      <MetricCard label={t("m_max_drawdown")} value={pct(metrics.max_drawdown)} />
+      <MetricCard label={t("m_final_equity")} value={fmtMoney(metrics.final_equity)} />
     </div>
   );
 }
 
 // ── Strategy vs Benchmark comparison table ────────────────────────────────────
-
-const METRIC_LABELS: Record<string, string> = {
-  total_return: "Total Return",
-  cagr: "CAGR",
-  sharpe_ratio: "Sharpe Ratio",
-  max_drawdown: "Max Drawdown",
-  final_equity: "Final Equity",
-};
-
-function formatComparisonVal(key: string, val: number): string {
-  if (key === "final_equity") return fmtMoney(val);
-  // Backend already returns these as percentages (e.g. 15.2, not 0.152)
-  if (["total_return", "cagr", "max_drawdown"].includes(key)) return `${val.toFixed(1)}%`;
-  return val.toFixed(2);
-}
 
 function ComparisonTable({
   comparison,
@@ -209,16 +199,26 @@ function ComparisonTable({
   comparison: Comparison;
   benchmarkSymbol?: string;
 }) {
+  const { t } = useLang();
+
+  const METRIC_LABELS: Record<string, string> = {
+    total_return: t("m_total_return"),
+    cagr: t("m_cagr"),
+    sharpe_ratio: t("m_sharpe"),
+    max_drawdown: t("m_max_drawdown"),
+    final_equity: t("m_final_equity"),
+  };
+
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
       <div className="px-4 py-2.5 border-b border-slate-700 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-        Strategy vs {benchmarkSymbol ?? "Benchmark"} (buy-and-hold)
+        {t("bt_strategy")} vs {benchmarkSymbol ?? "Benchmark"} ({t("bt_buy_hold")})
       </div>
       <table className="w-full text-left">
         <thead>
           <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase font-medium">
-            <th className="px-4 py-2">Metric</th>
-            <th className="px-4 py-2 text-right text-cyan-500">Strategy</th>
+            <th className="px-4 py-2">{t("m_metric")}</th>
+            <th className="px-4 py-2 text-right text-cyan-500">{t("bt_strategy")}</th>
             <th className="px-4 py-2 text-right text-slate-400">{benchmarkSymbol ?? "Benchmark"}</th>
           </tr>
         </thead>
@@ -247,27 +247,35 @@ function ComparisonTable({
   );
 }
 
+function formatComparisonVal(key: string, val: number): string {
+  if (key === "final_equity") return fmtMoney(val);
+  // Backend already returns these as percentages (e.g. 15.2, not 0.152)
+  if (["total_return", "cagr", "max_drawdown"].includes(key)) return `${val.toFixed(1)}%`;
+  return val.toFixed(2);
+}
+
 // ── Constraint counts chip ────────────────────────────────────────────────────
 
 function ConstraintChip({ counts }: { counts: ConstraintCounts }) {
+  const { t } = useLang();
   const total = counts.skipped_no_slot + counts.skipped_no_capital + counts.skipped_top_n;
   if (total === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-2 text-[11px]">
-      <span className="text-slate-500">Skipped signals:</span>
+      <span className="text-slate-500">{t("bt_skipped")}</span>
       {counts.skipped_top_n > 0 && (
         <span className="rounded-full bg-amber-900/40 border border-amber-700/50 px-2.5 py-0.5 text-amber-400">
-          {counts.skipped_top_n} ranked-out
+          {counts.skipped_top_n} {t("bt_ranked_out")}
         </span>
       )}
       {counts.skipped_no_slot > 0 && (
         <span className="rounded-full bg-orange-900/40 border border-orange-700/50 px-2.5 py-0.5 text-orange-400">
-          {counts.skipped_no_slot} no-slot
+          {counts.skipped_no_slot} {t("bt_no_slot")}
         </span>
       )}
       {counts.skipped_no_capital > 0 && (
         <span className="rounded-full bg-red-900/40 border border-red-700/50 px-2.5 py-0.5 text-red-400">
-          {counts.skipped_no_capital} no-capital
+          {counts.skipped_no_capital} {t("bt_no_capital")}
         </span>
       )}
     </div>
@@ -321,21 +329,22 @@ function GroupedTradeTable({
   selectedSymbol: string | null;
   onSelect: (sym: string) => void;
 }) {
+  const { t } = useLang();
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-x-auto">
       <div className="px-4 py-2.5 border-b border-slate-700 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-        Results by Symbol — click a row to view chart + trades
+        {t("bt_results_by_symbol")}
       </div>
       <table className="w-full text-left min-w-[640px]">
         <thead>
           <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase font-medium">
-            <th className="px-4 py-2">Symbol</th>
-            <th className="px-4 py-2 text-right"># Trades</th>
-            <th className="px-4 py-2 text-right">Win %</th>
-            <th className="px-4 py-2 text-right">Total P&L</th>
-            <th className="px-4 py-2 text-right">Avg / Trade</th>
-            <th className="px-4 py-2 text-right">Best</th>
-            <th className="px-4 py-2 text-right">Worst</th>
+            <th className="px-4 py-2">{t("col_symbol")}</th>
+            <th className="px-4 py-2 text-right">{t("col_n_trades")}</th>
+            <th className="px-4 py-2 text-right">{t("col_win_pct")}</th>
+            <th className="px-4 py-2 text-right">{t("col_total_pnl")}</th>
+            <th className="px-4 py-2 text-right">{t("col_avg_trade")}</th>
+            <th className="px-4 py-2 text-right">{t("col_best")}</th>
+            <th className="px-4 py-2 text-right">{t("col_worst")}</th>
           </tr>
         </thead>
         <tbody>
@@ -401,7 +410,7 @@ function GroupedTradeTable({
             return (
               <tfoot>
                 <tr className="border-t border-slate-700 text-[10px] text-slate-500 uppercase font-semibold bg-slate-900/60">
-                  <td className="px-4 py-2">Total</td>
+                  <td className="px-4 py-2">{t("total")}</td>
                   <td className="px-4 py-2 text-right">{totalTrades}</td>
                   <td className="px-4 py-2 text-right">
                     {((totalWins / totalTrades) * 100).toFixed(0)}%
@@ -426,6 +435,8 @@ function GroupedTradeTable({
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function Backtest() {
+  const { t } = useLang();
+
   // Universe & period
   const [universe, setUniverse] = useState("watchlist");
   const [start, setStart] = useState(fiveYearsAgo);
@@ -467,7 +478,7 @@ export function Backtest() {
   const selectedTrades = useMemo(() => {
     if (!selectedSymbol || !result?.trades) return [];
     return result.trades.filter(
-      (t) => (t.underlying_symbol ?? t.symbol) === selectedSymbol
+      (tr) => (tr.underlying_symbol ?? tr.symbol) === selectedSymbol
     );
   }, [selectedSymbol, result?.trades]);
 
@@ -540,36 +551,34 @@ export function Backtest() {
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-slate-100">Backtest</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Run the strategy over historical data with current config weights.
-        </p>
+        <h1 className="text-xl font-bold text-slate-100">{t("backtest_title")}</h1>
+        <p className="text-sm text-slate-500 mt-1">{t("backtest_desc")}</p>
       </div>
 
       {/* ── Parameters form ── */}
       <div className="bg-slate-900 rounded-xl border border-slate-700 p-5 space-y-5">
-        <h2 className="text-sm font-semibold text-slate-200">Parameters</h2>
+        <h2 className="text-sm font-semibold text-slate-200">{t("bt_params")}</h2>
 
         {/* Universe & Period */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Universe</label>
+            <label className="block text-xs text-slate-400 mb-1">{t("universe_label")}</label>
             <select
               value={universe}
               onChange={(e) => setUniverse(e.target.value)}
               className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500"
             >
-              <option value="watchlist">Watchlist</option>
-              <option value="sp500">S&amp;P 500</option>
-              <option value="nasdaq100">NASDAQ-100</option>
-              <option value="midcap">S&amp;P MidCap 400</option>
-              <option value="smallcap">S&amp;P SmallCap 600</option>
-              <option value="combined">Full Universe (Watchlist + S&amp;P 500/400/600)</option>
+              <option value="watchlist">{t("universe_watchlist")}</option>
+              <option value="sp500">{t("universe_sp500")}</option>
+              <option value="nasdaq100">{t("universe_nasdaq100")}</option>
+              <option value="midcap">{t("universe_midcap")}</option>
+              <option value="smallcap">{t("universe_smallcap")}</option>
+              <option value="combined">{t("universe_combined")}</option>
             </select>
           </div>
 
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Initial Fund ($)</label>
+            <label className="block text-xs text-slate-400 mb-1">{t("bt_initial_fund")}</label>
             <input
               type="text"
               inputMode="numeric"
@@ -583,7 +592,7 @@ export function Backtest() {
           </div>
 
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Start Date</label>
+            <label className="block text-xs text-slate-400 mb-1">{t("bt_start_date")}</label>
             <input
               type="date"
               value={start}
@@ -593,7 +602,7 @@ export function Backtest() {
           </div>
 
           <div>
-            <label className="block text-xs text-slate-400 mb-1">End Date</label>
+            <label className="block text-xs text-slate-400 mb-1">{t("bt_end_date")}</label>
             <input
               type="date"
               value={end}
@@ -605,22 +614,22 @@ export function Backtest() {
 
         {/* Platform Fees */}
         <div className="border-t border-slate-800 pt-4">
-          <SectionLabel>Platform Fees</SectionLabel>
+          <SectionLabel>{t("bt_platform_fees")}</SectionLabel>
           <div className="grid grid-cols-3 gap-4">
             <NumInput
-              label="Fee / Share ($)"
+              label={t("bt_fee_per_share")}
               value={feePerShare}
               onChange={setFeePerShare}
               step={0.001}
             />
             <NumInput
-              label="Min Fee ($)"
+              label={t("bt_fee_min")}
               value={feeMin}
               onChange={setFeeMin}
               step={0.5}
             />
             <NumInput
-              label="Max Fee (% of trade)"
+              label={t("bt_fee_max_pct")}
               value={feeMaxPct}
               onChange={setFeeMaxPct}
               step={0.1}
@@ -631,30 +640,30 @@ export function Backtest() {
 
         {/* Position Sizing */}
         <div className="border-t border-slate-800 pt-4">
-          <SectionLabel>Position Sizing</SectionLabel>
+          <SectionLabel>{t("bt_position_sizing")}</SectionLabel>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <NumInput
-              label="Size (% of equity)"
+              label={t("bt_size_pct")}
               value={positionSizePct}
               onChange={setPositionSizePct}
               step={1}
               suffix="%"
             />
             <NumInput
-              label="Min Position ($)"
+              label={t("bt_min_position")}
               value={positionSizeMin}
               onChange={setPositionSizeMin}
               step={500}
             />
             <NumInput
-              label="Per-name Cap (% of fund)"
+              label={t("bt_per_name_cap")}
               value={perNameCapPct}
               onChange={setPerNameCapPct}
               step={5}
               suffix="%"
             />
             <NumInput
-              label="Max Concurrent"
+              label={t("bt_max_concurrent")}
               value={maxConcurrent}
               onChange={setMaxConcurrent}
               step={1}
@@ -665,23 +674,23 @@ export function Backtest() {
 
         {/* Risk & Selection */}
         <div className="border-t border-slate-800 pt-4">
-          <SectionLabel>Risk &amp; Selection</SectionLabel>
+          <SectionLabel>{t("bt_risk_selection")}</SectionLabel>
           <div className="grid grid-cols-3 gap-4">
             <NumInput
-              label="ATR Stop Multiple"
+              label={t("bt_atr_stop")}
               value={atrStopMultiple}
               onChange={setAtrStopMultiple}
               step={0.1}
             />
             <NumInput
-              label="Top N by Score"
+              label={t("bt_top_n")}
               value={topN}
               onChange={setTopN}
               step={1}
               min={1}
             />
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Benchmark Ticker</label>
+              <label className="block text-xs text-slate-400 mb-1">{t("bt_benchmark")}</label>
               <input
                 type="text"
                 value={benchmarkSymbol}
@@ -703,7 +712,7 @@ export function Backtest() {
                 : "bg-cyan-600 text-white hover:bg-cyan-500"
             }`}
           >
-            {polling ? "Running backtest…" : "Run Backtest"}
+            {polling ? t("bt_running") : t("bt_run")}
           </button>
           {jobId && polling && (
             <span className="text-xs text-slate-500 font-mono">Job {jobId}</span>
@@ -721,7 +730,7 @@ export function Backtest() {
       {polling && (
         <div className="bg-slate-900 border border-slate-700 rounded-xl px-5 py-4 space-y-3">
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-            Backtest Running
+            {t("bt_running_label")}
           </p>
           {progress ? (
             <ProgressBar {...progress} />
@@ -737,7 +746,7 @@ export function Backtest() {
       {/* ── Error result ── */}
       {result && result.status === "error" && (
         <div className="rounded-xl border border-red-800 bg-red-950/40 px-5 py-4 text-red-300 text-sm">
-          Backtest failed: {result.error}
+          {t("bt_failed")}{result.error}
         </div>
       )}
 
@@ -766,7 +775,7 @@ export function Backtest() {
 
           {/* Strategy metrics */}
           <div>
-            <h2 className="text-sm font-semibold text-slate-200 mb-3">Strategy Performance</h2>
+            <h2 className="text-sm font-semibold text-slate-200 mb-3">{t("bt_strategy_perf")}</h2>
             <MetricsDisplay metrics={displayMetrics} />
           </div>
 
@@ -774,7 +783,7 @@ export function Backtest() {
           {result.benchmark_metrics?.final_equity !== undefined && (
             <div>
               <h2 className="text-sm font-semibold text-slate-200 mb-3">
-                {bkSymbol} Buy-and-Hold Performance
+                {bkSymbol} {t("bt_benchmark_perf")}
               </h2>
               <BenchmarkMetricsDisplay metrics={result.benchmark_metrics} />
             </div>
@@ -789,7 +798,7 @@ export function Backtest() {
           {result.comparison?.metrics && Object.keys(result.comparison.metrics).length > 0 && (
             <div>
               <h2 className="text-sm font-semibold text-slate-200 mb-3">
-                Strategy vs Benchmark
+                {t("bt_vs_benchmark")}
               </h2>
               <ComparisonTable comparison={result.comparison} benchmarkSymbol={bkSymbol} />
             </div>
@@ -799,15 +808,15 @@ export function Backtest() {
           {result.equity_curve && result.equity_curve.length > 0 && (
             <div>
               <div className="flex items-center gap-4 mb-3">
-                <h2 className="text-sm font-semibold text-slate-200">Equity Curve</h2>
+                <h2 className="text-sm font-semibold text-slate-200">{t("bt_equity_curve")}</h2>
                 <div className="flex items-center gap-3 text-[10px] text-slate-500">
                   <span className="flex items-center gap-1">
-                    <span className="inline-block w-6 h-0.5 bg-cyan-400" /> Strategy
+                    <span className="inline-block w-6 h-0.5 bg-cyan-400" /> {t("bt_strategy")}
                   </span>
                   {result.benchmark_equity_curve && (
                     <span className="flex items-center gap-1">
                       <span className="inline-block w-6 h-0.5 bg-slate-500 border-dashed" />{" "}
-                      {bkSymbol} buy-and-hold
+                      {bkSymbol} {t("bt_buy_hold")}
                     </span>
                   )}
                 </div>
@@ -817,6 +826,7 @@ export function Backtest() {
                   data={result.equity_curve}
                   benchmarkData={result.benchmark_equity_curve}
                   benchmarkLabel={bkSymbol}
+                  strategyLabel={t("bt_strategy")}
                 />
               </div>
             </div>
@@ -826,7 +836,7 @@ export function Backtest() {
           {result.trades && result.trades.length > 0 && (
             <div className="space-y-4">
               <h2 className="text-sm font-semibold text-slate-200">
-                Trade Results — {groupedStats.length} symbol
+                {t("bt_trade_results")} — {groupedStats.length} symbol
                 {groupedStats.length !== 1 ? "s" : ""}
               </h2>
 

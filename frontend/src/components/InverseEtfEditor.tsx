@@ -2,8 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchInverseEtfs } from "../lib/api";
 import { LoadingState } from "./LoadingState";
 import { ErrorState } from "./ErrorState";
+import { useLang } from "../lib/LanguageContext";
 
 export function InverseEtfEditor() {
+  const { t } = useLang();
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["inverseEtfs"],
     queryFn: fetchInverseEtfs,
@@ -12,36 +14,28 @@ export function InverseEtfEditor() {
   return (
     <div className="bg-slate-900 rounded-xl border border-slate-700 p-5 space-y-4">
       <div>
-        <h2 className="text-sm font-semibold text-slate-200">Inverse-ETF Map</h2>
-        <p className="text-xs text-slate-500 mt-1">
-          Short-signal rows use this map to look up the inverse ETF to buy. To add or
-          edit rows, update{" "}
-          <code className="text-cyan-400 font-mono text-[11px]">data/inverse_etfs.csv</code>{" "}
-          and restart the backend. (A write endpoint has been requested — see
-          SHARED_CHANGES.md.)
-        </p>
+        <h2 className="text-sm font-semibold text-slate-200">{t("inverse_etf_title")}</h2>
+        <p className="text-xs text-slate-500 mt-1">{t("inverse_etf_desc")}</p>
       </div>
 
       {isLoading ? (
-        <LoadingState label="Loading map…" />
+        <LoadingState label={t("loading")} />
       ) : error ? (
         <ErrorState
-          message={`Failed to load: ${(error as Error).message}`}
+          message={`${t("error")}: ${(error as Error).message}`}
           onRetry={() => refetch()}
         />
       ) : !data || data.count === 0 ? (
-        <p className="text-xs text-slate-500 italic">
-          No mappings found. Add rows to data/inverse_etfs.csv.
-        </p>
+        <p className="text-xs text-slate-500 italic">{t("inverse_etf_empty")}</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-700 text-slate-500 uppercase">
-                <th className="pb-2 pr-4">Underlying</th>
-                <th className="pb-2 pr-4">Inverse ETF</th>
-                <th className="pb-2 pr-4">Leverage</th>
-                <th className="pb-2">Note</th>
+                <th className="pb-2 pr-4">{t("col_underlying")}</th>
+                <th className="pb-2 pr-4">{t("col_inverse_etf")}</th>
+                <th className="pb-2 pr-4">{t("col_leverage")}</th>
+                <th className="pb-2">{t("note")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
