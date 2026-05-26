@@ -14,6 +14,7 @@ AlphaSignal is a **personal-use** web application for analysing US equities and 
 | S&P 500 | Current S&P 500 members | Fetched from Wikipedia, cached locally |
 | S&P MidCap 400 | Current S&P 400 members | Part of the "S&P 1000" |
 | S&P SmallCap 600 | Current S&P 600 members | Part of the "S&P 1000" |
+| NASDAQ 100 | Current NASDAQ-100 members | Selectable separately; not included in "combined" |
 | Combined | S&P 500 ∪ MidCap 400 ∪ SmallCap 600 ∪ Watchlist, deduplicated | Default universe for scans |
 | Watchlist | User-defined symbols (add/remove in Settings) | Always included in "combined" |
 
@@ -245,6 +246,8 @@ Entries are reverse-chronological (most recent first). Each mod corresponds to a
 ---
 
 ### v0.1.0 — May 2026
+
+**Mod-G patch (May 2026):** Corrected trading universe table — added NASDAQ 100 as a selectable universe (separately from "combined").
 
 **Mod-G (May 2026):** Added "About" section with four tabs (Overview & Scope, Strategy Details, Backtest Details & Limitations, Changelog). Single source of truth in `docs/ABOUT.md`, rendered live via `GET /api/about`. Added standing rule to CLAUDE.md to keep this document current.
 
