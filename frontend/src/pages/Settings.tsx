@@ -1,280 +1,270 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchConfigStrategy, putConfigStrategy } from "../lib/api";
+import { fetchConfig, putConfig, downloadPineScript } from "../lib/api";
 import { WatchlistEditor } from "../components/WatchlistEditor";
-import { InverseEtfEditor } from "../components/InverseEtfEditor";
 import { ScheduleToggle } from "../components/ScheduleToggle";
 import { LoadingState } from "../components/LoadingState";
 import { ErrorState } from "../components/ErrorState";
 import { exportSettingsToExcel } from "../lib/exportSettings";
 import { useLang } from "../lib/LanguageContext";
-import type { ConfigWeights, ConfigThresholds, ConfigResponse, ScoringTablesUpdate } from "../lib/types";
+import type {
+  ConfigResponse,
+  EntrySide,
+  ExitSide,
+  StrategyParams,
+  EntryWeights,
+  ExitWeights,
+} from "../lib/types";
 
-type Strategy = "long" | "short";
+type TKey = Parameters<ReturnType<typeof useLang>["t"]>[0];
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-const WEIGHT_KEYS: (keyof ConfigWeights)[] = [
-  "candlestick", "p3", "p5", "volume", "ema", "sr", "macd", "rsi",
+const ENTRY_WEIGHT_KEYS: Array<[keyof EntryWeights, TKey]> = [
+  ["macd_hidden_bull", "w_macd_hidden_bull"],
+  ["rsi_hidden_bull", "w_rsi_hidden_bull"],
+  ["rsi_zone", "w_rsi_zone"],
+  ["demark_td9_buy", "w_demark_td9_buy"],
 ];
 
-function scoreColor(v: number) {
-  return v > 0 ? "text-emerald-400" : v < 0 ? "text-red-400" : "text-slate-400";
+const EXIT_WEIGHT_KEYS: Array<[keyof ExitWeights, TKey]> = [
+  ["demark_td13_sell", "w_demark_td13_sell"],
+  ["macd_regular_bear", "w_macd_regular_bear"],
+  ["rsi_regular_bear", "w_rsi_regular_bear"],
+  ["demark_td9_sell", "w_demark_td9_sell"],
+];
+
+const PARAM_FIELD_KEY: Record<string, TKey> = {
+  ema_fast: "pf_ema_fast", ema_slow: "pf_ema_slow", slope_lookback: "pf_slope_lookback",
+  left: "pf_left", right: "pf_right", min_bars: "pf_min_bars", max_bars: "pf_max_bars",
+  fast: "pf_fast", slow: "pf_slow", signal: "pf_signal",
+  period: "pf_period", zone_low: "pf_zone_low", zone_high: "pf_zone_high",
+  setup: "pf_setup", countdown: "pf_countdown",
+  setup_lookback: "pf_setup_lookback", countdown_lookback: "pf_countdown_lookback",
+};
+
+const PARAM_GROUPS: Array<[keyof StrategyParams, TKey]> = [
+  ["regime", "pg_regime"],
+  ["pivots", "pg_pivots"],
+  ["macd", "pg_macd"],
+  ["rsi", "pg_rsi"],
+  ["demark", "pg_demark"],
+];
+
+// ── Small inputs ───────────────────────────────────────────────────────────────
+
+function WeightRow({
+  label, value, accent, onChange,
+}: { label: string; value: number; accent: string; onChange: (n: number) => void }) {
+  return (
+    <div className="flex items-center gap-4">
+      <label className="w-64 text-sm text-slate-300 flex-shrink-0">{label}</label>
+      <input
+        type="range" min={0} max={50} step={1} value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        className={`flex-1 ${accent}`}
+      />
+      <input
+        type="number" min={0} max={100} step={1} value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        className="w-16 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-right font-mono text-slate-100 focus:outline-none focus:border-cyan-500"
+      />
+    </div>
+  );
 }
 
-// ── Editable score table ──────────────────────────────────────────────────────
+function NumField({
+  label, value, onChange,
+}: { label: string; value: number; onChange: (n: number) => void }) {
+  return (
+    <div>
+      <label className="block text-xs text-slate-400 mb-1">{label}</label>
+      <input
+        type="number" value={value} step={1}
+        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-cyan-500"
+      />
+    </div>
+  );
+}
 
-function ScoreTableEditor({
-  label,
-  scores,
-  onChange,
+// ── Entry / Exit side editor ────────────────────────────────────────────────────
+
+function SideEditor({
+  titleKey, descKey, thresholdKey, accent, weightKeys, side, onChange,
 }: {
-  label: string;
-  scores: Record<string, number>;
-  onChange: (updated: Record<string, number>) => void;
+  titleKey: TKey; descKey: TKey; thresholdKey: TKey; accent: string;
+  weightKeys: Array<[string, TKey]>;
+  side: EntrySide | ExitSide;
+  onChange: (s: EntrySide | ExitSide) => void;
 }) {
-  function handleChange(key: string, raw: string) {
-    const val = parseFloat(raw);
-    if (isNaN(val)) return;
-    const clamped = Math.max(-100, Math.min(100, val));
-    onChange({ ...scores, [key]: clamped });
-  }
+  const { t } = useLang();
+  const weights = side.weights as unknown as Record<string, number>;
+  const maxScore = Object.values(weights).reduce((a, b) => a + b, 0);
 
   return (
-    <div className="bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-slate-700">
-        <h3 className="text-sm font-semibold text-slate-200">{label}</h3>
+    <div className="bg-slate-900 rounded-xl border border-slate-700 p-5 space-y-4">
+      <div>
+        <h2 className={`text-sm font-bold ${accent}`}>{t(titleKey)}</h2>
+        <p className="text-xs text-slate-500 mt-1">{t(descKey)}</p>
       </div>
-      <div className="divide-y divide-slate-700/40">
-        {Object.entries(scores).map(([k, v]) => (
-          <div key={k} className="flex items-center justify-between px-4 py-1.5 gap-3">
-            <span className="text-xs text-slate-400 font-mono flex-1 truncate">
-              {k.replace(/_/g, " ")}
-            </span>
-            <input
-              type="number"
-              min={-100}
-              max={100}
-              step={1}
-              value={v}
-              onChange={(e) => handleChange(k, e.target.value)}
-              className={`w-20 text-right text-xs font-mono font-semibold bg-slate-900 border border-slate-700
-                rounded px-2 py-0.5 focus:outline-none focus:border-cyan-500 ${scoreColor(v)}`}
-            />
-          </div>
+
+      <div className="space-y-3">
+        <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">
+          {t("cfg_component_scores")}
+        </p>
+        {weightKeys.map(([key, lblKey]) => (
+          <WeightRow
+            key={key}
+            label={t(lblKey)}
+            accent={accent === "text-emerald-400" ? "accent-emerald-400" : "accent-orange-400"}
+            value={weights[key]}
+            onChange={(n) => onChange({ ...side, weights: { ...weights, [key]: n } } as unknown as EntrySide)}
+          />
         ))}
+        <p className="text-xs text-slate-500">
+          {t("cfg_max_score")}: <span className="font-mono text-slate-300">{maxScore}</span>
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 border-t border-slate-800 pt-4">
+        <NumField
+          label={t(thresholdKey)}
+          value={side.threshold}
+          onChange={(n) => onChange({ ...side, threshold: n })}
+        />
+        <NumField
+          label={t("cfg_conf_window")}
+          value={side.conf_window}
+          onChange={(n) => onChange({ ...side, conf_window: Math.max(1, Math.round(n)) })}
+        />
       </div>
     </div>
   );
 }
 
-// ── Threshold editor ──────────────────────────────────────────────────────────
+// ── Export button ────────────────────────────────────────────────────────────
 
-type ThresholdKey = keyof ConfigThresholds;
+const DOWNLOAD_ICON = (
+  <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+    <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+  </svg>
+);
 
-const THRESHOLD_KEYS: Array<[ThresholdKey, string, string]> = [
-  ["strong_buy",  "signal_strong_buy",  "text-emerald-400"],
-  ["buy",         "signal_buy",         "text-green-400"],
-  ["sell",        "signal_sell",        "text-orange-400"],
-  ["strong_sell", "signal_strong_sell", "text-red-400"],
-];
-
-function ThresholdEditor({
-  thresholds,
-  onChange,
-}: {
-  thresholds: ConfigThresholds;
-  onChange: (t: ConfigThresholds) => void;
-}) {
+function ExportButton({ cfg, dirty }: { cfg: ConfigResponse | undefined; dirty: boolean }) {
   const { t } = useLang();
+  const [pineErr, setPineErr] = useState<string | null>(null);
+  const [pineBusy, setPineBusy] = useState(false);
 
-  const ordered =
-    thresholds.strong_sell < thresholds.sell &&
-    thresholds.sell < 0 &&
-    0 < thresholds.buy &&
-    thresholds.buy < thresholds.strong_buy;
-
-  function handleChange(key: keyof ConfigThresholds, raw: string) {
-    const val = parseFloat(raw);
-    if (isNaN(val)) return;
-    onChange({ ...thresholds, [key]: val });
+  async function onDownloadPine() {
+    setPineErr(null);
+    setPineBusy(true);
+    try {
+      await downloadPineScript();
+    } catch (e) {
+      setPineErr((e as Error).message);
+    } finally {
+      setPineBusy(false);
+    }
   }
+
+  const btnBase =
+    "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold border transition-all";
+  const btnEnabled =
+    "border-slate-600 bg-slate-800 text-slate-200 hover:border-cyan-500 hover:text-cyan-300";
+  const btnDisabled = "border-slate-700 bg-slate-800/40 text-slate-500 cursor-not-allowed";
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-2 gap-3">
-        {THRESHOLD_KEYS.map(([key, labelKey, cls]) => (
-          <div key={key} className="flex items-center justify-between bg-slate-800 rounded-lg px-4 py-2">
-            <span className={`text-sm font-semibold ${cls}`}>{t(labelKey as Parameters<typeof t>[0])}</span>
-            <input
-              type="number"
-              step={1}
-              value={thresholds[key]}
-              onChange={(e) => handleChange(key, e.target.value)}
-              className="w-20 text-right text-sm font-mono text-slate-100 bg-slate-900 border border-slate-700
-                rounded px-2 py-1 focus:outline-none focus:border-cyan-500"
-            />
-          </div>
-        ))}
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={() => cfg && exportSettingsToExcel(cfg)}
+          disabled={!cfg}
+          className={`${btnBase} ${!cfg ? btnDisabled : btnEnabled}`}
+        >
+          {DOWNLOAD_ICON}
+          {t("export_xlsx")}
+        </button>
+        <button
+          onClick={onDownloadPine}
+          disabled={pineBusy}
+          className={`${btnBase} ${pineBusy ? btnDisabled : btnEnabled}`}
+        >
+          {DOWNLOAD_ICON}
+          {pineBusy ? t("exporting") : t("export_pine")}
+        </button>
+        <span className="text-xs text-slate-500">{t("export_pine_desc")}</span>
       </div>
-      {!ordered && (
-        <p className="text-xs text-red-400 mt-1">{t("threshold_order_hint")}</p>
-      )}
-      <p className="text-xs text-slate-600">{t("threshold_desc")}</p>
+      {dirty && <p className="text-xs text-amber-400/80">{t("export_pine_dirty")}</p>}
+      {pineErr && <p className="text-xs text-red-400">{pineErr}</p>}
     </div>
   );
 }
 
-// ── Scoring tables derived from config ───────────────────────────────────────
+// ── Strategy editor ────────────────────────────────────────────────────────────
 
-function scoringTablesFromConfig(config: ConfigResponse): ScoringTablesUpdate {
-  return {
-    candlestick: { ...config.candlestick.scores },
-    p3: { ...config.p3.scores },
-    p5: { ...config.p5.scores },
-    ema_stacking: { ...config.ema.stacking_scores },
-    ema_cross: { ...config.ema.cross_scores },
-    sr: { ...config.sr.scores },
-    macd: { ...config.macd.micro_signals },
-    rsi: { ...config.rsi.scores },
-  };
-}
-
-// ── Main profile editor ───────────────────────────────────────────────────────
-
-function ProfileEditor({ strategy }: { strategy: Strategy }) {
+function StrategyEditor() {
   const qc = useQueryClient();
   const { t } = useLang();
-  const isLong = strategy === "long";
 
   const { data: config, isLoading, error, refetch } = useQuery({
-    queryKey: ["config", strategy],
-    queryFn: () => fetchConfigStrategy(strategy),
+    queryKey: ["config"],
+    queryFn: fetchConfig,
   });
 
-  const [weights, setWeights] = useState<ConfigWeights | null>(null);
-  const [thresholds, setThresholds] = useState<ConfigThresholds | null>(null);
-  const [scoringTables, setScoringTables] = useState<ScoringTablesUpdate | null>(null);
+  const [entry, setEntry] = useState<EntrySide | null>(null);
+  const [exitSide, setExitSide] = useState<ExitSide | null>(null);
+  const [params, setParams] = useState<StrategyParams | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
     if (config && !dirty) {
-      setWeights({ ...config.weights });
-      setThresholds({ ...config.thresholds });
-      setScoringTables(scoringTablesFromConfig(config));
+      setEntry({ ...config.entry, weights: { ...config.entry.weights } });
+      setExitSide({ ...config.exit, weights: { ...config.exit.weights } });
+      setParams({
+        regime: { ...config.regime }, pivots: { ...config.pivots },
+        macd: { ...config.macd }, rsi: { ...config.rsi }, demark: { ...config.demark },
+      });
     }
   }, [config, dirty]);
 
-  const weightTotal = weights ? Object.values(weights).reduce((s, v) => s + v, 0) : 0;
-  const weightsOk = Math.abs(weightTotal - 100) < 0.01;
-
-  const thresholdsOk = thresholds
-    ? thresholds.strong_sell < thresholds.sell &&
-      thresholds.sell < 0 &&
-      0 < thresholds.buy &&
-      thresholds.buy < thresholds.strong_buy
-    : false;
-
-  const canSave = dirty && weightsOk && thresholdsOk;
-
   const saveMutation = useMutation({
-    mutationFn: () =>
-      putConfigStrategy(strategy, {
-        weights: weights!,
-        thresholds: thresholds!,
-        scoring_tables: scoringTables!,
-      }),
+    mutationFn: () => putConfig({ entry: entry!, exit: exitSide!, params: params! }),
     onSuccess: () => {
       setSaveSuccess(true);
       setDirty(false);
-      qc.invalidateQueries({ queryKey: ["config", strategy] });
+      qc.invalidateQueries({ queryKey: ["config"] });
       qc.invalidateQueries({ queryKey: ["signals"] });
       setTimeout(() => setSaveSuccess(false), 4000);
     },
   });
 
-  function handleWeightChange(key: keyof ConfigWeights, raw: string) {
-    const val = parseFloat(raw);
-    if (isNaN(val)) return;
-    setWeights((prev) => ({ ...prev!, [key]: val }));
-    setDirty(true);
-    setSaveSuccess(false);
-  }
-
-  function handleThresholdsChange(t: ConfigThresholds) {
-    setThresholds(t);
-    setDirty(true);
-    setSaveSuccess(false);
-  }
-
-  function handleTableChange(tableKey: keyof ScoringTablesUpdate, updated: Record<string, number>) {
-    setScoringTables((prev) => ({ ...prev!, [tableKey]: updated }));
-    setDirty(true);
-    setSaveSuccess(false);
-  }
-
-  // Translated weight labels
-  const WEIGHT_I18N: Record<keyof ConfigWeights, string> = {
-    candlestick: t("wt_candlestick"),
-    p3: t("wt_p3"),
-    p5: t("wt_p5"),
-    volume: t("wt_volume"),
-    ema: t("wt_ema"),
-    sr: t("wt_sr"),
-    macd: t("wt_macd"),
-    rsi: t("wt_rsi"),
-  };
-
-  // Translated scoring table labels
-  const ST_LABELS: Record<keyof ScoringTablesUpdate, string> = {
-    candlestick: t("st_candlestick"),
-    p3: t("st_p3"),
-    p5: t("st_p5"),
-    ema_stacking: t("st_ema_stacking"),
-    ema_cross: t("st_ema_cross"),
-    sr: t("st_sr"),
-    macd: t("st_macd"),
-    rsi: t("st_rsi"),
-  };
+  function markDirty() { setDirty(true); setSaveSuccess(false); }
 
   if (isLoading) return <LoadingState label={t("loading")} />;
-  if (error)
-    return (
-      <ErrorState
-        message={`${t("error")}: ${(error as Error).message}`}
-        onRetry={() => refetch()}
-      />
-    );
-  if (!config || !weights || !thresholds || !scoringTables) return null;
+  if (error) return <ErrorState message={`${t("error")}: ${(error as Error).message}`} onRetry={() => refetch()} />;
+  if (!config || !entry || !exitSide || !params) return null;
 
   return (
-    <div className="space-y-8">
-      {/* Dirty / save bar */}
+    <div className="space-y-6">
+      {/* Save bar */}
       {dirty && (
-        <div className={`flex items-center justify-between gap-4 rounded-xl border px-4 py-3 ${
-          isLong
-            ? "border-emerald-600/50 bg-emerald-950/40"
-            : "border-red-600/50 bg-red-950/40"
-        }`}>
-          <p className={`text-sm ${isLong ? "text-emerald-300" : "text-red-300"}`}>
-            <strong>{t("unsaved_changes")}</strong>{" "}
-            {isLong ? t("unsaved_desc_long") : t("unsaved_desc_short")}
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-cyan-600/40 bg-cyan-950/30 px-4 py-3">
+          <p className="text-sm text-cyan-200">
+            <strong>{t("unsaved_changes")}</strong> {t("unsaved_strategy")}
           </p>
           <div className="flex items-center gap-3 flex-shrink-0">
-            {saveSuccess && (
-              <span className="text-sm text-emerald-400 font-medium">{t("saved")}</span>
-            )}
+            {saveSuccess && <span className="text-sm text-emerald-400 font-medium">{t("saved")}</span>}
             {saveMutation.error && (
-              <span className="text-xs text-red-400 max-w-xs">
-                {(saveMutation.error as Error).message}
-              </span>
+              <span className="text-xs text-red-400 max-w-xs">{(saveMutation.error as Error).message}</span>
             )}
             <button
               onClick={() => {
-                setWeights({ ...config.weights });
-                setThresholds({ ...config.thresholds });
-                setScoringTables(scoringTablesFromConfig(config));
+                setEntry({ ...config.entry, weights: { ...config.entry.weights } });
+                setExitSide({ ...config.exit, weights: { ...config.exit.weights } });
+                setParams({
+                  regime: { ...config.regime }, pivots: { ...config.pivots },
+                  macd: { ...config.macd }, rsi: { ...config.rsi }, demark: { ...config.demark },
+                });
                 setDirty(false);
               }}
               className="px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 border border-slate-600 hover:border-slate-400 transition-colors"
@@ -283,173 +273,60 @@ function ProfileEditor({ strategy }: { strategy: Strategy }) {
             </button>
             <button
               onClick={() => saveMutation.mutate()}
-              disabled={!canSave || saveMutation.isPending}
-              className={`px-5 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-                !canSave
-                  ? "bg-slate-700 text-slate-500 cursor-not-allowed"
-                  : saveMutation.isPending
-                  ? "bg-cyan-600/50 text-cyan-300 cursor-wait"
-                  : "bg-cyan-600 text-white hover:bg-cyan-500"
-              }`}
+              disabled={saveMutation.isPending}
+              className="px-5 py-1.5 rounded-lg text-sm font-semibold bg-cyan-600 text-white hover:bg-cyan-500 disabled:bg-cyan-600/50 disabled:cursor-wait"
             >
-              {saveMutation.isPending ? t("saving") : (isLong ? t("save_long") : t("save_short"))}
+              {saveMutation.isPending ? t("saving") : t("save_strategy")}
             </button>
           </div>
         </div>
       )}
 
-      {/* ── Component Weights ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <SideEditor
+          titleKey="cfg_entry_section" descKey="cfg_entry_desc" thresholdKey="cfg_entry_threshold"
+          accent="text-emerald-400" weightKeys={ENTRY_WEIGHT_KEYS as Array<[string, TKey]>}
+          side={entry}
+          onChange={(s) => { setEntry(s as EntrySide); markDirty(); }}
+        />
+        <SideEditor
+          titleKey="cfg_exit_section" descKey="cfg_exit_desc" thresholdKey="cfg_exit_threshold"
+          accent="text-orange-400" weightKeys={EXIT_WEIGHT_KEYS as Array<[string, TKey]>}
+          side={exitSide}
+          onChange={(s) => { setExitSide(s as ExitSide); markDirty(); }}
+        />
+      </div>
+
+      {/* Indicator parameters */}
       <div className="bg-slate-900 rounded-xl border border-slate-700 p-5 space-y-4">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-slate-200">{t("component_weights")}</h2>
-          <span className={`text-sm font-mono font-bold ${weightsOk ? "text-emerald-400" : "text-red-400"}`}>
-            {weightTotal.toFixed(1)} {t("weight_total")}
-          </span>
+        <div>
+          <h2 className="text-sm font-semibold text-slate-200">{t("cfg_indicator_params")}</h2>
+          <p className="text-xs text-slate-500 mt-1">{t("cfg_indicator_params_hint")}</p>
         </div>
-        {WEIGHT_KEYS.map((key) => (
-          <div key={key} className="flex items-center gap-4">
-            <label className="w-44 text-sm text-slate-300 flex-shrink-0">
-              {WEIGHT_I18N[key]}
-            </label>
-            <input
-              type="range"
-              min={0}
-              max={60}
-              step={0.5}
-              value={weights[key]}
-              onChange={(e) => handleWeightChange(key, e.target.value)}
-              className={`flex-1 ${isLong ? "accent-emerald-400" : "accent-red-400"}`}
-            />
-            <input
-              type="number"
-              min={0}
-              max={100}
-              step={0.1}
-              value={weights[key]}
-              onChange={(e) => handleWeightChange(key, e.target.value)}
-              className="w-16 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm
-                text-right font-mono text-slate-100 focus:outline-none focus:border-cyan-500"
-            />
-            <span className="text-slate-500 text-sm w-2">%</span>
-          </div>
-        ))}
+        {PARAM_GROUPS.map(([group, groupKey]) => {
+          const obj = params[group] as unknown as Record<string, number>;
+          return (
+            <div key={group} className="space-y-2">
+              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">{t(groupKey)}</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {Object.entries(obj).map(([field, value]) => (
+                  <NumField
+                    key={field}
+                    label={t(PARAM_FIELD_KEY[field] ?? (field as TKey))}
+                    value={value}
+                    onChange={(n) => {
+                      setParams({ ...params, [group]: { ...obj, [field]: n } });
+                      markDirty();
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
-      {/* ── Signal Thresholds ── */}
-      <div className="bg-slate-900 rounded-xl border border-slate-700 p-5 space-y-3">
-        <h2 className="text-sm font-semibold text-slate-200">{t("signal_thresholds")}</h2>
-        <ThresholdEditor thresholds={thresholds} onChange={handleThresholdsChange} />
-      </div>
-
-      {/* ── Scoring Tables ── */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-200">{t("scoring_tables")}</h2>
-          <p className="text-xs text-slate-500">{t("scoring_range_hint")}</p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <ScoreTableEditor
-            label={ST_LABELS.candlestick}
-            scores={scoringTables.candlestick!}
-            onChange={(u) => handleTableChange("candlestick", u)}
-          />
-          <ScoreTableEditor
-            label={ST_LABELS.p3}
-            scores={scoringTables.p3!}
-            onChange={(u) => handleTableChange("p3", u)}
-          />
-          <ScoreTableEditor
-            label={ST_LABELS.p5}
-            scores={scoringTables.p5!}
-            onChange={(u) => handleTableChange("p5", u)}
-          />
-          <ScoreTableEditor
-            label={ST_LABELS.ema_stacking}
-            scores={scoringTables.ema_stacking!}
-            onChange={(u) => handleTableChange("ema_stacking", u)}
-          />
-          <ScoreTableEditor
-            label={ST_LABELS.ema_cross}
-            scores={scoringTables.ema_cross!}
-            onChange={(u) => handleTableChange("ema_cross", u)}
-          />
-          <ScoreTableEditor
-            label={ST_LABELS.sr}
-            scores={scoringTables.sr!}
-            onChange={(u) => handleTableChange("sr", u)}
-          />
-          <ScoreTableEditor
-            label={ST_LABELS.macd}
-            scores={scoringTables.macd!}
-            onChange={(u) => handleTableChange("macd", u)}
-          />
-          <ScoreTableEditor
-            label={ST_LABELS.rsi}
-            scores={scoringTables.rsi!}
-            onChange={(u) => handleTableChange("rsi", u)}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Export button ─────────────────────────────────────────────────────────────
-
-function ExportButton() {
-  const { t } = useLang();
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const { data: longCfg } = useQuery({
-    queryKey: ["config", "long"],
-    queryFn: () => fetchConfigStrategy("long"),
-  });
-  const { data: shortCfg } = useQuery({
-    queryKey: ["config", "short"],
-    queryFn: () => fetchConfigStrategy("short"),
-  });
-
-  async function handleExport() {
-    if (!longCfg || !shortCfg) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      exportSettingsToExcel(longCfg, shortCfg);
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const ready = !!longCfg && !!shortCfg;
-
-  return (
-    <div className="flex items-center gap-3">
-      <button
-        onClick={handleExport}
-        disabled={!ready || busy}
-        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold border transition-all ${
-          !ready
-            ? "border-slate-700 bg-slate-800/40 text-slate-500 cursor-not-allowed"
-            : busy
-            ? "border-amber-500/40 bg-amber-500/10 text-amber-300 cursor-wait"
-            : "border-slate-600 bg-slate-800 text-slate-200 hover:border-cyan-500 hover:text-cyan-300 hover:bg-slate-800/80"
-        }`}
-      >
-        {/* Download icon */}
-        <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
-          <path
-            fillRule="evenodd"
-            d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
-            clipRule="evenodd"
-          />
-        </svg>
-        {busy ? t("exporting") : t("export_xlsx")}
-      </button>
-      <span className="text-xs text-slate-500">{t("export_xlsx_desc")}</span>
-      {err && <span className="text-xs text-red-400">{err}</span>}
+      <ExportButton cfg={config} dirty={dirty} />
     </div>
   );
 }
@@ -457,59 +334,19 @@ function ExportButton() {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export function Settings() {
-  const [activeStrategy, setActiveStrategy] = useState<Strategy>("long");
   const { t } = useLang();
-
   return (
-    <div className="p-6 max-w-3xl space-y-10">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-slate-100">{t("settings_title")}</h1>
-          <p className="text-sm text-slate-500 mt-1">{t("settings_desc")}</p>
-        </div>
-        <ExportButton />
+    <div className="p-6 max-w-5xl space-y-10">
+      <div>
+        <h1 className="text-xl font-bold text-slate-100">{t("settings_title")}</h1>
+        <p className="text-sm text-slate-500 mt-1">{t("settings_desc_v2")}</p>
       </div>
 
-      {/* Profile tabs */}
-      <div className="space-y-4">
-        <div className="flex gap-1 bg-slate-800 rounded-lg p-1 w-fit">
-          {(["long", "short"] as Strategy[]).map((s) => (
-            <button
-              key={s}
-              onClick={() => setActiveStrategy(s)}
-              className={`px-6 py-1.5 rounded text-sm font-semibold transition-all ${
-                activeStrategy === s
-                  ? s === "long"
-                    ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/40"
-                    : "bg-red-600/30 text-red-300 border border-red-500/40"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              {s === "long" ? t("long_profile") : t("short_profile")}
-            </button>
-          ))}
-        </div>
-
-        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold w-fit ${
-          activeStrategy === "long"
-            ? "border-emerald-500/40 bg-emerald-950/30 text-emerald-300"
-            : "border-red-500/40 bg-red-950/30 text-red-300"
-        }`}>
-          <span className={`w-2 h-2 rounded-full ${activeStrategy === "long" ? "bg-emerald-400" : "bg-red-400"}`} />
-          {activeStrategy === "long" ? t("editing_long") : t("editing_short")}
-        </div>
-
-        <ProfileEditor key={activeStrategy} strategy={activeStrategy} />
-      </div>
+      <StrategyEditor />
 
       <div className="border-t border-slate-800 pt-8 space-y-4">
-        <h2 className="text-base font-bold text-slate-100">{t("watchlist_title")}</h2>
+        <h2 className="text-base font-bold text-slate-100">{t("watchlists_title")}</h2>
         <WatchlistEditor />
-      </div>
-
-      <div className="border-t border-slate-800 pt-8 space-y-4">
-        <h2 className="text-base font-bold text-slate-100">{t("inverse_etf_title")}</h2>
-        <InverseEtfEditor />
       </div>
 
       <div className="border-t border-slate-800 pt-8 space-y-4">

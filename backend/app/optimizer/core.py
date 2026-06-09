@@ -27,12 +27,15 @@ import optuna
 import pandas as pd
 import yaml
 
-from backend.app.config import AppConfig, BacktestConfig
+from backend.app.config import AppConfig, BacktestConfig, StrategyConfig
 from backend.app.optimizer.fast_engine import fast_backtest_long, fast_backtest_with_benchmark
 from backend.app.optimizer.param_space import (
+    ENTRY_PARAM,
+    ENTRY_WEIGHTS,
+    EXIT_PARAM,
+    EXIT_WEIGHTS,
     build_strat_from_trial,
-    extract_weights_from_params,
-    weights_sum_to_100,
+    weights_from_params,
 )
 from backend.app.optimizer.precompute import PrecomputedSymbol, precompute_symbols
 from backend.app.optimizer.walk_forward import run_walk_forward
@@ -47,7 +50,7 @@ _REPORTS_DIR = _REPO_ROOT / "reports"
 
 @dataclass
 class OptimiserConfig:
-    strategy: Literal["long"] = "long"
+    strategy: Literal["hidden_div"] = "hidden_div"
     years: int = 5
     insample_ratio: float = 0.70
     max_trials: int = 2000
@@ -83,7 +86,17 @@ class OptimisationResult:
     n_trials_attempted: int
     n_trials_in_sample_beat_benchmark: int
     pass_verdict: bool
+    verdict_tier: str = "OVERFIT"   # ROBUST | SUSPECT | OVERFIT
     verdict_notes: list[str] = field(default_factory=list)
+    # Best trial's composite score and its components (from objective function)
+    best_composite_score: float = 0.0
+    best_trial_wf_mean: float = 0.0
+    best_trial_wf_std: float = 0.0
+    best_trial_wf_fold_sharpes: list[float] = field(default_factory=list)
+    best_trial_max_dd_pct: float = 0.0
+    best_trial_dd_penalty: float = 0.0
+    # Per-trial records for CSV export (one dict per completed trial)
+    trial_records: list[dict] = field(default_factory=list)
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
@@ -95,14 +108,22 @@ def run_optimisation(
     base_cfg: AppConfig,
     data_fetcher: Callable,
     opt_cfg: OptimiserConfig | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> OptimisationResult:
-    """Full optimisation pipeline. Returns OptimisationResult with all findings."""
+    """Full optimisation pipeline. Returns OptimisationResult with all findings.
+
+    ``progress_callback(n_done, n_total, phase)`` (optional) is invoked while the
+    search runs so a UI can show a live progress bar; ``n_total`` is the trial
+    budget, ``n_done`` the trials completed so far.
+    """
     if opt_cfg is None:
         opt_cfg = OptimiserConfig()
 
     t0 = time.perf_counter()
 
     # ── 1. Pre-compute ────────────────────────────────────────────────────────
+    if progress_callback:
+        progress_callback(0, opt_cfg.max_trials, "Loading data & indicators")
     logger.info("Pre-computing indicators for %d symbols…", len(symbols))
     precomputed = precompute_symbols(
         symbols, start, end, base_cfg, data_fetcher,
@@ -144,34 +165,103 @@ def run_optimisation(
         opt_cfg.max_trials, opt_cfg.seed,
     )
 
+    # Walk-forward CV fold windows — all within in-sample, holdout never touched.
+    # Expanding windows: reserve 1/(n_folds+1) of in-sample for initial training,
+    # then n_folds equal-sized test windows.  Folds span different market regimes
+    # (including any bear-market periods) so no single regime can dominate.
+    insample_dates = [d for d in all_dates if d <= insample_end]
+    n_cv_folds   = opt_cfg.n_folds
+    cv_test_size = len(insample_dates) // (n_cv_folds + 1)
+    cv_fold_windows: list[tuple[date, date]] = []
+    for _k in range(n_cv_folds):
+        _ts_idx = cv_test_size * (_k + 1)
+        _te_idx = min(cv_test_size * (_k + 2) - 1, len(insample_dates) - 1)
+        cv_fold_windows.append((insample_dates[_ts_idx], insample_dates[_te_idx]))
+
+    logger.info(
+        "CV fold windows (in-sample only): %s",
+        [(str(s), str(e)) for s, e in cv_fold_windows],
+    )
+
     def _objective(trial: optuna.Trial) -> float:
         strat, bk = build_strat_from_trial(
             trial, base_cfg,
             include_scoring_tables=opt_cfg.include_scoring_tables,
             include_sizing=opt_cfg.include_sizing,
         )
-        # CRITICAL: objective only sees in-sample data
-        res = fast_backtest_long(
-            precomputed, strat, base_cfg, bk,
-            all_dates[0], insample_end,
-            include_scoring_tables=opt_cfg.include_scoring_tables,
-        )
-        m = res.metrics
-        dd = m.get("max_drawdown", 100.0)
-        if dd > opt_cfg.max_drawdown_limit * 100:
+        # Evaluate the config on each CV fold's test window (no re-optimisation per fold)
+        fold_sharpes: list[float] = []
+        fold_cagrs:   list[float] = []
+        fold_dds:     list[float] = []
+        for f_start, f_end in cv_fold_windows:
+            res = fast_backtest_long(
+                precomputed, strat, base_cfg, bk,
+                f_start, f_end,
+                include_scoring_tables=opt_cfg.include_scoring_tables,
+            )
+            fold_sharpes.append(res.metrics.get("sharpe_ratio", 0.0))
+            fold_cagrs.append(res.metrics.get("cagr", 0.0))
+            fold_dds.append(res.metrics.get("max_drawdown", 100.0))
+
+        max_dd   = max(fold_dds)
+        if max_dd > opt_cfg.max_drawdown_limit * 100:
             raise optuna.exceptions.TrialPruned()
-        # Store CAGR as a user attribute so luck audit can count without re-running
-        trial.set_user_attr("insample_cagr", m.get("cagr", 0.0))
-        return m.get("sharpe_ratio", 0.0)
+
+        # Composite: reward mean fold Sharpe, penalise cross-fold variance and excess DD
+        mean_wf  = sum(fold_sharpes) / len(fold_sharpes)
+        std_wf   = math.sqrt(
+            sum((s - mean_wf) ** 2 for s in fold_sharpes) / len(fold_sharpes)
+        )
+        dd_penalty = 1.0 * max(0.0, max_dd - 15.0) / 100.0
+        score = mean_wf - 0.5 * std_wf - dd_penalty
+
+        logger.info(
+            "trial %d: fold_sharpes=%s mean_wf=%.3f std_wf=%.3f "
+            "max_dd=%.1f dd_penalty=%.3f composite=%.3f",
+            trial.number, [round(s, 3) for s in fold_sharpes],
+            mean_wf, std_wf, max_dd, dd_penalty, score,
+        )
+
+        mean_cagr = sum(fold_cagrs) / len(fold_cagrs)
+        trial.set_user_attr("insample_cagr",  round(mean_cagr, 4))
+        trial.set_user_attr("wf_sharpe_mean", round(mean_wf,   4))
+        trial.set_user_attr("wf_sharpe_std",  round(std_wf,    4))
+        for _i, _s in enumerate(fold_sharpes, 1):
+            trial.set_user_attr(f"wf_sharpe_f{_i}", round(_s, 4))
+        trial.set_user_attr("max_dd_pct",  round(max_dd,    4))
+        trial.set_user_attr("dd_penalty",  round(dd_penalty, 4))
+        return score
+
+    def _trial_progress_cb(study: optuna.Study, trial: "optuna.trial.FrozenTrial") -> None:
+        if progress_callback:
+            try:
+                progress_callback(len(study.trials), opt_cfg.max_trials, "In-sample search")
+            except Exception:  # noqa: BLE001
+                pass
 
     study.optimize(
         _objective,
         n_trials=opt_cfg.max_trials,
         show_progress_bar=True,
         catch=(Exception,),
+        callbacks=[_trial_progress_cb],
     )
+    if progress_callback:
+        progress_callback(
+            opt_cfg.max_trials, opt_cfg.max_trials,
+            "Validating (walk-forward + overfit checks)",
+        )
 
     best_trial = study.best_trial
+    best_composite_score = best_trial.value or 0.0
+    best_trial_wf_mean   = best_trial.user_attrs.get("wf_sharpe_mean", 0.0)
+    best_trial_wf_std    = best_trial.user_attrs.get("wf_sharpe_std",  0.0)
+    best_trial_wf_fold_sharpes = [
+        best_trial.user_attrs.get(f"wf_sharpe_f{i}", 0.0)
+        for i in range(1, n_cv_folds + 1)
+    ]
+    best_trial_max_dd_pct = best_trial.user_attrs.get("max_dd_pct",  0.0)
+    best_trial_dd_penalty = best_trial.user_attrs.get("dd_penalty",  0.0)
     best_strat, best_bk = build_strat_from_trial(
         best_trial, base_cfg,
         include_scoring_tables=opt_cfg.include_scoring_tables,
@@ -222,13 +312,19 @@ def run_optimisation(
     )
 
     # ── 7. Anti-overfitting analysis ──────────────────────────────────────────
+    def _calmar(m: dict) -> float:
+        cagr = m.get("cagr", 0.0)
+        dd   = m.get("max_drawdown", 0.0)
+        return cagr / dd if dd > 0 else 0.0
+
     luck_audit = _run_luck_audit(
         study=study,
         precomputed=precomputed,
         base_cfg=base_cfg,
         holdout_start=holdout_start,
         holdout_end=all_dates[-1],
-        holdout_benchmark_cagr=holdout_result.benchmark_metrics.get("cagr", 0.0),
+        holdout_benchmark_sharpe=holdout_result.benchmark_metrics.get("sharpe_ratio", 0.0),
+        holdout_benchmark_calmar=_calmar(holdout_result.benchmark_metrics),
         n_random=opt_cfg.n_luck_audit_configs,
         opt_cfg=opt_cfg,
         data_fetcher=data_fetcher,
@@ -256,47 +352,101 @@ def run_optimisation(
     wf_m = wf_result.oos_metrics
 
     verdict_notes: list[str] = []
-    holdout_beats_qqq = h_m.get("cagr", 0.0) > h_bm.get("cagr", 0.0)
-    holdout_dd_ok     = h_m.get("max_drawdown", 100.0) <= opt_cfg.max_drawdown_limit * 100
-    wf_beats_qqq      = wf_m.get("cagr", 0.0) > is_result.benchmark_metrics.get("cagr", 0.0)
-    wf_dd_ok          = wf_m.get("max_drawdown", 100.0) <= opt_cfg.max_drawdown_limit * 100
 
-    pass_verdict = holdout_beats_qqq and holdout_dd_ok and wf_beats_qqq and wf_dd_ok
+    wf_sharpe  = wf_m.get("sharpe_ratio", 0.0)
+    wf_calmar  = _calmar(wf_m)
+    wf_dd      = wf_m.get("max_drawdown", 100.0)
+    qqq_sharpe = h_bm.get("sharpe_ratio", 0.0)
+    qqq_calmar = _calmar(h_bm)
 
-    if not holdout_beats_qqq:
+    is_sharpe  = is_result.metrics.get("sharpe_ratio", 0.0)
+    oos_sharpe = h_m.get("sharpe_ratio", 0.0)
+    is_oos_gap = is_sharpe - oos_sharpe
+
+    beats_sharpe = wf_sharpe > qqq_sharpe
+    beats_calmar = wf_calmar > qqq_calmar
+    dd_ok        = wf_dd <= 15.0
+    gap_ok       = is_oos_gap <= 0.5
+
+    # Classify into three tiers
+    if beats_sharpe and beats_calmar and dd_ok and gap_ok:
+        verdict_tier = "ROBUST"
+    elif beats_sharpe or beats_calmar:
+        verdict_tier = "SUSPECT"
+    else:
+        verdict_tier = "OVERFIT"
+
+    # IS→OOS gap override: even a partial win is flagged OVERFIT if gap is too large
+    if not gap_ok:
+        verdict_tier = "OVERFIT"
         verdict_notes.append(
-            f"FAIL: Holdout CAGR ({h_m.get('cagr', 0):.1f}%) does not beat QQQ "
-            f"({h_bm.get('cagr', 0):.1f}%)"
+            f"OVERFIT SIGNAL: IS Sharpe ({is_sharpe:.2f}) − OOS Sharpe ({oos_sharpe:.2f}) "
+            f"= {is_oos_gap:.2f} > 0.50 threshold"
         )
-    if not holdout_dd_ok:
+
+    if verdict_tier == "ROBUST":
         verdict_notes.append(
-            f"FAIL: Holdout max drawdown ({h_m.get('max_drawdown', 0):.1f}%) "
-            f"exceeds limit ({opt_cfg.max_drawdown_limit*100:.0f}%)"
-        )
-    if not wf_beats_qqq:
-        verdict_notes.append(
-            f"FAIL: Walk-forward OOS CAGR ({wf_m.get('cagr', 0):.1f}%) does not beat QQQ"
-        )
-    if not wf_dd_ok:
-        verdict_notes.append(
-            f"FAIL: Walk-forward OOS max drawdown ({wf_m.get('max_drawdown', 0):.1f}%) "
-            f"exceeds limit"
-        )
-    if pass_verdict:
-        verdict_notes.append(
-            "PASS: Beats QQQ on holdout AND walk-forward, within drawdown limit."
+            f"ROBUST: Walk-forward Sharpe ({wf_sharpe:.2f} > QQQ {qqq_sharpe:.2f}), "
+            f"Calmar ({wf_calmar:.2f} > QQQ {qqq_calmar:.2f}), DD {wf_dd:.1f}% ≤ 15%, "
+            f"IS–OOS gap {is_oos_gap:.2f} ≤ 0.50."
         )
         if opt_cfg.include_scoring_tables:
             verdict_notes.append(
                 "WARNING: Aggressive search with scoring tables active — treat as SUSPECTED "
                 "OVERFIT until confirmed by live paper-trading."
             )
+    elif verdict_tier == "SUSPECT":
+        beaten = []
+        if beats_sharpe: beaten.append(f"Sharpe ({wf_sharpe:.2f} > QQQ {qqq_sharpe:.2f})")
+        if beats_calmar: beaten.append(f"Calmar ({wf_calmar:.2f} > QQQ {qqq_calmar:.2f})")
+        missed = []
+        if not beats_sharpe: missed.append(f"Sharpe ({wf_sharpe:.2f} ≤ QQQ {qqq_sharpe:.2f})")
+        if not beats_calmar: missed.append(f"Calmar ({wf_calmar:.2f} ≤ QQQ {qqq_calmar:.2f})")
+        if not dd_ok: missed.append(f"DD {wf_dd:.1f}% > 15%")
+        verdict_notes.append(
+            f"SUSPECT: Beats QQQ on {', '.join(beaten)} but not on {', '.join(missed)}."
+        )
+    else:
+        if not beats_sharpe:
+            verdict_notes.append(
+                f"FAIL: Walk-forward Sharpe ({wf_sharpe:.2f}) ≤ QQQ ({qqq_sharpe:.2f})"
+            )
+        if not beats_calmar:
+            verdict_notes.append(
+                f"FAIL: Walk-forward Calmar ({wf_calmar:.2f}) ≤ QQQ ({qqq_calmar:.2f})"
+            )
+        if not dd_ok:
+            verdict_notes.append(
+                f"FAIL: Walk-forward max drawdown ({wf_dd:.1f}%) > 15% limit"
+            )
+
+    pass_verdict = verdict_tier == "ROBUST"
 
     wall_clock = time.perf_counter() - t0
     logger.info("Optimisation complete in %.1f s. Verdict: %s", wall_clock,
                 "PASS" if pass_verdict else "FAIL")
 
     completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+
+    # Build per-trial records for CSV export
+    trial_records: list[dict] = []
+    for t in completed:
+        if t.value is None:
+            continue
+        w = weights_from_params(t.params)
+        trial_records.append({
+            "trial_number":    t.number,
+            "composite_score": round(t.value, 6),
+            "wf_sharpe_mean":  t.user_attrs.get("wf_sharpe_mean", 0.0),
+            "wf_sharpe_std":   t.user_attrs.get("wf_sharpe_std",  0.0),
+            **{f"wf_sharpe_f{i}": t.user_attrs.get(f"wf_sharpe_f{i}", 0.0)
+               for i in range(1, n_cv_folds + 1)},
+            "max_dd_pct":      t.user_attrs.get("max_dd_pct",  0.0),
+            "dd_penalty":      t.user_attrs.get("dd_penalty",  0.0),
+            **{name: round(val, 4) for name, val in w.items()},
+            "entry_threshold": t.params.get("entry_threshold", 0.0),
+            "exit_threshold":  t.params.get("exit_threshold",  0.0),
+        })
 
     return OptimisationResult(
         best_params=best_trial.params,
@@ -318,7 +468,15 @@ def run_optimisation(
         n_trials_attempted=len(completed),
         n_trials_in_sample_beat_benchmark=n_beat_bm,
         pass_verdict=pass_verdict,
+        verdict_tier=verdict_tier,
         verdict_notes=verdict_notes,
+        best_composite_score=best_composite_score,
+        best_trial_wf_mean=best_trial_wf_mean,
+        best_trial_wf_std=best_trial_wf_std,
+        best_trial_wf_fold_sharpes=best_trial_wf_fold_sharpes,
+        best_trial_max_dd_pct=best_trial_max_dd_pct,
+        best_trial_dd_penalty=best_trial_dd_penalty,
+        trial_records=trial_records,
     )
 
 
@@ -330,17 +488,26 @@ def _run_luck_audit(
     base_cfg: AppConfig,
     holdout_start: date,
     holdout_end: date,
-    holdout_benchmark_cagr: float,
+    holdout_benchmark_sharpe: float,
+    holdout_benchmark_calmar: float,
     n_random: int,
     opt_cfg: OptimiserConfig,
     data_fetcher: Callable,
 ) -> dict:
     """Count how many of the top completed trials beat benchmark on holdout.
 
+    Win criterion: beats QQQ on BOTH Sharpe AND Calmar (risk-adjusted).
     Also runs n_random completely random configs through the holdout to estimate
     the chance baseline (how many random configs "win" by luck alone).
     """
     logger.info("Running luck audit (%d random null configs)…", n_random)
+
+    def _is_winner(m: dict) -> bool:
+        strat_sharpe = m.get("sharpe_ratio", 0.0)
+        strat_cagr   = m.get("cagr", 0.0)
+        strat_dd     = m.get("max_drawdown", 0.0)
+        strat_calmar = strat_cagr / strat_dd if strat_dd > 0 else 0.0
+        return strat_sharpe > holdout_benchmark_sharpe and strat_calmar > holdout_benchmark_calmar
 
     completed = [
         t for t in study.trials
@@ -348,7 +515,7 @@ def _run_luck_audit(
     ]
     n_total = len(completed)
 
-    # Sample the top 200 (by in-sample Sharpe) to evaluate on holdout
+    # Sample the top 200 (by composite objective score) to evaluate on holdout
     top_trials = sorted(completed, key=lambda t: t.value or 0.0, reverse=True)[:200]
     n_holdout_winners = 0
     for t in top_trials:
@@ -362,7 +529,7 @@ def _run_luck_audit(
                 precomputed, strat, base_cfg, bk, holdout_start, holdout_end,
                 include_scoring_tables=opt_cfg.include_scoring_tables,
             )
-            if res.metrics.get("cagr", 0.0) > holdout_benchmark_cagr:
+            if _is_winner(res.metrics):
                 n_holdout_winners += 1
         except Exception:  # noqa: BLE001
             pass
@@ -386,7 +553,7 @@ def _run_luck_audit(
                 precomputed, strat, base_cfg, bk, holdout_start, holdout_end,
                 include_scoring_tables=opt_cfg.include_scoring_tables,
             )
-            if res.metrics.get("cagr", 0.0) > holdout_benchmark_cagr:
+            if _is_winner(res.metrics):
                 null_wins += 1
             null_study.tell(trial, res.metrics.get("sharpe_ratio", 0.0))
         except Exception:  # noqa: BLE001
@@ -405,6 +572,7 @@ def _run_luck_audit(
         "null_holdout_wins": null_wins,
         "null_win_rate": round(null_win_rate, 3),
         "likely_noise": likely_noise,
+        "win_criterion": "beats QQQ on Sharpe AND Calmar (risk-adjusted)",
         "assessment": (
             "⚠ Winner is likely NOISE: observed win rate is close to random baseline."
             if likely_noise
@@ -423,50 +591,33 @@ def _run_perturbation_test(
     opt_cfg: OptimiserConfig,
     data_fetcher: Callable,
 ) -> list[dict]:
-    """Nudge the best config's weights ±5-10 points and measure holdout stability.
-
-    A REAL edge degrades gracefully; an OVERFIT config collapses.
+    """Nudge one of the best config's component scores ±10 points and measure
+    holdout stability. A REAL edge degrades gracefully; an OVERFIT config collapses.
     """
     logger.info("Running perturbation test (%d nudges)…", n_nudges)
     rng = random.Random(opt_cfg.seed + 777)
-    _WEIGHT_NAMES = ["candlestick", "p3", "p5", "volume", "ema", "sr", "macd", "rsi"]
-
-    # Reconstruct best normalised weights
-    raw_best = {n: best_params.get(f"w_{n}", 1.0) for n in _WEIGHT_NAMES}
-    total = sum(raw_best.values())
-    best_normalised = {n: v / total * 100.0 for n, v in raw_best.items()}
+    weight_keys = list(ENTRY_PARAM.values()) + list(EXIT_PARAM.values())
 
     results: list[dict] = []
 
+    class _MockTrial:
+        def __init__(self, params):
+            self._params = params
+        def suggest_float(self, name, low, high):
+            v = self._params.get(name, (low + high) / 2)
+            return max(low, min(high, float(v)))
+        def suggest_int(self, name, low, high):
+            v = self._params.get(name, (low + high) // 2)
+            return max(low, min(high, int(v)))
+        @property
+        def params(self):
+            return self._params
+
     for nudge_idx in range(n_nudges):
-        # Randomly redistribute 5-10 points among weight pairs
-        nudge_w = dict(best_normalised)
-        donor = rng.choice(_WEIGHT_NAMES)
-        recipient = rng.choice([n for n in _WEIGHT_NAMES if n != donor])
-        shift = rng.uniform(5.0, 10.0)
-        nudge_w[donor]    = max(0.5, nudge_w[donor] - shift)
-        nudge_w[recipient] = nudge_w[recipient] + shift
-        # Re-normalise
-        total_n = sum(nudge_w.values())
-        nudge_w = {k: v / total_n * 100.0 for k, v in nudge_w.items()}
-
-        # Build a mock trial-like object to reuse build_strat_from_trial
         mock_params = dict(best_params)
-        for n in _WEIGHT_NAMES:
-            mock_params[f"w_{n}"] = nudge_w[n]  # store already-normalised as raw
-
-        class _MockTrial:
-            def __init__(self, params):
-                self._params = params
-            def suggest_float(self, name, low, high):
-                v = self._params.get(name, (low + high) / 2)
-                return max(low, min(high, float(v)))
-            def suggest_int(self, name, low, high):
-                v = self._params.get(name, (low + high) // 2)
-                return max(low, min(high, int(v)))
-            @property
-            def params(self):
-                return self._params
+        key = rng.choice(weight_keys)
+        shift = rng.uniform(-10.0, 10.0)
+        mock_params[key] = max(0.0, float(mock_params.get(key, 0.0)) + shift)
 
         try:
             strat, bk = build_strat_from_trial(
@@ -476,11 +627,10 @@ def _run_perturbation_test(
             )
             res = fast_backtest_long(
                 precomputed, strat, base_cfg, bk, holdout_start, holdout_end,
-                include_scoring_tables=opt_cfg.include_scoring_tables,
             )
             results.append({
                 "nudge": nudge_idx + 1,
-                "donor": donor, "recipient": recipient, "shift": round(shift, 1),
+                "param": key, "shift": round(shift, 1),
                 "sharpe": res.metrics.get("sharpe_ratio", 0.0),
                 "cagr":   res.metrics.get("cagr", 0.0),
                 "max_dd": res.metrics.get("max_drawdown", 0.0),
@@ -497,7 +647,7 @@ def _run_cluster_check(study: optuna.Study, top_n: int) -> dict:
     Clustered weights → a real region of parameter space with an edge.
     Scattered weights → winners are random draws.
     """
-    _WEIGHT_NAMES = ["candlestick", "p3", "p5", "volume", "ema", "sr", "macd", "rsi"]
+    _WEIGHT_NAMES = ENTRY_WEIGHTS + EXIT_WEIGHTS
     completed = [
         t for t in study.trials
         if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None
@@ -506,13 +656,11 @@ def _run_cluster_check(study: optuna.Study, top_n: int) -> dict:
     if len(top) < 5:
         return {"assessment": "Too few trials for cluster analysis."}
 
-    # Extract normalised weights for each top trial
+    # Extract raw entry/exit weights for each top trial
     weight_matrix = []
     for t in top:
-        raw = {n: t.params.get(f"w_{n}", 1.0) for n in _WEIGHT_NAMES}
-        total = sum(raw.values())
-        norm = [raw[n] / total * 100.0 for n in _WEIGHT_NAMES]
-        weight_matrix.append(norm)
+        w = weights_from_params(t.params)
+        weight_matrix.append([w[n] for n in _WEIGHT_NAMES])
 
     # Compute pairwise Euclidean distances and average
     import itertools
@@ -569,8 +717,13 @@ def save_candidate_config(
     with open(live_path) as fh:
         live_dict = yaml.safe_load(fh)
 
-    # Replace strategy-specific section with optimised values
-    live_dict["strategies"][strategy] = opt_result.best_strat_dict
+    # Replace strategy-specific section with optimised values. best_strat_dict
+    # uses descriptive field names (for the report/printout); re-dump it with the
+    # Pine alias keys so the candidate file stays 1:1 with the live config.yaml
+    # schema and can be promoted with a plain copy.
+    live_dict["strategies"][strategy] = (
+        StrategyConfig.model_validate(opt_result.best_strat_dict).model_dump(by_alias=True)
+    )
 
     with open(output_path, "w") as fh:
         yaml.dump(live_dict, fh, default_flow_style=False, sort_keys=False)

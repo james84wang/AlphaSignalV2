@@ -21,8 +21,8 @@ from backend.app.api.symbols import router as symbols_router
 from backend.app.api.config_routes import router as config_router
 from backend.app.api.runs import router as runs_router
 from backend.app.api.backtest import router as backtest_router
+from backend.app.api.optimizer import router as optimizer_router
 from backend.app.api.watchlist import router as watchlist_router
-from backend.app.api.inverse_etfs_routes import router as inverse_etfs_router
 from backend.app.api.market import router as market_router
 from backend.app.api.schedule import router as schedule_router
 from backend.app.api.about import router as about_router
@@ -59,47 +59,64 @@ app.add_middleware(
 )
 
 
-def _seed_watchlist_from_csv() -> None:
-    """If the watchlist table is empty, seed it from data/watchlist.csv."""
-    if not _WATCHLIST_CSV.exists():
-        return
-    try:
-        import pandas as pd
-        df = pd.read_csv(_WATCHLIST_CSV)
-        if "symbol" not in df.columns:
-            return
-        symbols = df["symbol"].str.strip().str.upper().dropna().tolist()
-        if not symbols:
-            return
+_CHINATECH_STARTER = ["BABA", "PDD", "JD", "BIDU", "NIO", "BILI"]
+_SEED_MARKER = _DATA_DIR / ".watchlists_seeded"
 
+
+def _seed_watchlists() -> None:
+    """Seed the default list from CSV on a fresh DB, and seed the ChinaTech
+    starter set once. The other configured lists start empty (user-editable)."""
+    try:
+        cfg = load_config()
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         factory = make_session_factory(_DB_PATH)
         with factory() as session:
-            existing_count = session.execute(select(WatchlistEntry)).scalars().first()
-            if existing_count is not None:
-                return  # already seeded
+            any_rows = session.execute(select(WatchlistEntry)).scalars().first()
 
-            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            for sym in symbols:
-                session.add(WatchlistEntry(symbol=sym, added_at=now, note="seeded from watchlist.csv"))
-            session.commit()
-            logger.info("Seeded watchlist DB with %d symbols from watchlist.csv", len(symbols))
+            # 1. Brand-new DB → seed the default "Watchlist" from data/watchlist.csv.
+            if any_rows is None and _WATCHLIST_CSV.exists():
+                import pandas as pd
+                df = pd.read_csv(_WATCHLIST_CSV)
+                if "symbol" in df.columns:
+                    symbols = sorted(set(df["symbol"].str.strip().str.upper().dropna().tolist()))
+                    for sym in symbols:
+                        session.add(WatchlistEntry(list_name="Watchlist", symbol=sym, added_at=now, note="seeded"))
+                    session.commit()
+                    logger.info("Seeded 'Watchlist' with %d symbols from watchlist.csv", len(symbols))
+
+            # 2. One-time ChinaTech starter (only if configured and currently empty).
+            if not _SEED_MARKER.exists():
+                ct = "Watchlist - ChinaTech"
+                if ct in cfg.universe.watchlists:
+                    has_ct = session.execute(
+                        select(WatchlistEntry).where(WatchlistEntry.list_name == ct)
+                    ).scalars().first()
+                    if has_ct is None:
+                        for sym in _CHINATECH_STARTER:
+                            session.add(WatchlistEntry(list_name=ct, symbol=sym, added_at=now, note="starter"))
+                        session.commit()
+                        logger.info("Seeded '%s' with %d starter symbols", ct, len(_CHINATECH_STARTER))
+                try:
+                    _SEED_MARKER.write_text(now)
+                except OSError:
+                    pass
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Could not seed watchlist from CSV: %s", exc)
+        logger.warning("Could not seed watchlists: %s", exc)
 
 
 # Ensure SQLite tables exist and run schema migrations at startup.
 _engine = init_db(_DB_PATH)
 migrate_db(_engine)
 init_backtest_db()
-_seed_watchlist_from_csv()
+_seed_watchlists()
 
 app.include_router(signals_router)
 app.include_router(symbols_router)
 app.include_router(config_router)
 app.include_router(runs_router)
 app.include_router(backtest_router)
+app.include_router(optimizer_router)
 app.include_router(watchlist_router)
-app.include_router(inverse_etfs_router)
 app.include_router(market_router)
 app.include_router(schedule_router)
 app.include_router(about_router)

@@ -1,31 +1,35 @@
 #!/usr/bin/env python
 """MOD-I: Strategy optimiser with overfitting protection.
 
-Optimises the long (or short) strategy using Bayesian search (Optuna/TPE) on a
-70% in-sample window, validates on the held-out 30%, runs walk-forward validation
-over 4 folds, and writes a markdown report with a clear PASS/FAIL verdict.
+Optimises the hidden_div (Hidden-Divergence Confluence) strategy using Bayesian
+search (Optuna/TPE) on a 70% in-sample window, validates on the held-out 30%,
+runs walk-forward validation over 4 folds, and writes a markdown report with a
+clear PASS/FAIL verdict.
 
 The live config.yaml is NEVER touched; the winner is saved to
 config.candidate.<strategy>.yaml for manual review and promotion.
 
 Usage examples:
-  # Optimise long over the default 5-year window (watchlist universe)
-  uv run python scripts/optimize.py --strategy long
+  # Optimise over the default 5-year window (watchlist universe)
+  uv run python scripts/optimize.py
 
   # Full combined universe (slower)
-  uv run python scripts/optimize.py --strategy long --universe combined
+  uv run python scripts/optimize.py --universe combined
+
+  # A single named watchlist
+  uv run python scripts/optimize.py --universe "wl:Watchlist - ChinaTech"
 
   # With custom date range
-  uv run python scripts/optimize.py --strategy long --start 2020-01-01 --end 2025-01-01
+  uv run python scripts/optimize.py --start 2020-01-01 --end 2025-01-01
 
-  # Aggressive Phase-2 (also tunes scoring tables)
-  uv run python scripts/optimize.py --strategy long --include-scoring-tables
+  # Aggressive Phase-2 (also tunes the confluence windows)
+  uv run python scripts/optimize.py --include-scoring-tables
 
   # Include position sizing in search (Phase-3)
-  uv run python scripts/optimize.py --strategy long --include-sizing
+  uv run python scripts/optimize.py --include-sizing
 
   # Quick test (few trials)
-  uv run python scripts/optimize.py --strategy long --trials 50 --universe watchlist
+  uv run python scripts/optimize.py --trials 50 --universe watchlist
 """
 from __future__ import annotations
 
@@ -40,13 +44,10 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from backend.app.config import load_config, reset_config
 from backend.app.data.cache import ParquetCache
-from backend.app.data.universe import (
-    fetch_sp500_symbols, fetch_sp400_symbols, fetch_sp600_symbols,
-    fetch_nasdaq100_symbols,
-)
+from backend.app.data.watchlists import resolve_universe
 from backend.app.data.yfinance_provider import YFinanceProvider
 from backend.app.optimizer.core import OptimiserConfig, run_optimisation, save_candidate_config
-from backend.app.optimizer.report import generate_report
+from backend.app.optimizer.report import generate_report, write_trials_csv
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,28 +58,13 @@ logger = logging.getLogger(__name__)
 
 
 def _load_symbols(universe: str, cfg) -> list[str]:
-    if universe == "watchlist":
-        wl_path = _REPO_ROOT / "data" / "watchlist.csv"
-        if not wl_path.exists():
-            return ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
-                    "JPM", "V", "UNH", "MA", "HD", "PG", "BAC", "XOM"]
-        import pandas as pd
-        df = pd.read_csv(wl_path)
-        return df["symbol"].str.upper().dropna().tolist()
-
-    elif universe == "sp500":
-        return fetch_sp500_symbols()
-    elif universe == "midcap":
-        return fetch_sp400_symbols()
-    elif universe == "smallcap":
-        return fetch_sp600_symbols()
-    elif universe == "nasdaq100":
-        return fetch_nasdaq100_symbols()
-    elif universe == "combined":
-        syms = set(fetch_sp500_symbols()) | set(fetch_sp400_symbols())
-        return sorted(syms)
-    else:
-        raise ValueError(f"Unknown universe: {universe!r}")
+    """Resolve a universe id (watchlist | wl:<name> | sp500 | … | combined)."""
+    syms = resolve_universe(universe, cfg)
+    if not syms and universe == "watchlist":
+        # Convenience fallback when the watchlist DB is empty.
+        return ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+                "JPM", "V", "UNH", "MA", "HD", "PG", "BAC", "XOM"]
+    return syms
 
 
 def main() -> None:
@@ -86,10 +72,9 @@ def main() -> None:
         description="AlphaSignalV2 Strategy Optimiser (MOD-I)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--strategy", choices=["long", "short"], default="long")
+    parser.add_argument("--strategy", choices=["hidden_div"], default="hidden_div")
     parser.add_argument("--universe", default="watchlist",
-                        choices=["watchlist", "sp500", "midcap", "smallcap",
-                                 "nasdaq100", "combined"])
+                        help="watchlist | wl:<name> | sp500 | midcap | smallcap | nasdaq100 | combined")
     parser.add_argument("--start", type=str, default=None,
                         help="Start date YYYY-MM-DD (default: 5 years back)")
     parser.add_argument("--end", type=str, default=None,
@@ -108,10 +93,6 @@ def main() -> None:
     parser.add_argument("--include-sizing", action="store_true",
                         help="Phase-3: also optimise position sizing and concurrent limits")
     args = parser.parse_args()
-
-    if args.strategy == "short":
-        logger.error("Short strategy optimisation is not yet implemented in MOD-I.")
-        sys.exit(1)
 
     # ── Config + date range ───────────────────────────────────────────────────
     reset_config()
@@ -172,10 +153,12 @@ def main() -> None:
     # ── Save candidate config ─────────────────────────────────────────────────
     candidate_path = save_candidate_config(result, args.strategy, cfg)
 
-    # ── Write report ──────────────────────────────────────────────────────────
+    # ── Write report + per-trial CSV ─────────────────────────────────────────
     report_path = generate_report(result, args.strategy, symbols,
                                   candidate_path=candidate_path)
     logger.info("Report written to %s", report_path)
+    csv_path = write_trials_csv(result, args.strategy)
+    logger.info("Trials CSV written to %s (%d rows)", csv_path, len(result.trial_records))
 
     # ── Summary printout ──────────────────────────────────────────────────────
     is_m = result.insample_metrics
@@ -240,13 +223,20 @@ def main() -> None:
         print(f"  Perturbation: {len(pert)} nudges, mean holdout Sharpe after nudge = {mean_s:.3f} "
               f"(best config holdout Sharpe = {h_m.get('sharpe_ratio', 0):.3f})")
 
-    print(f"\n  Best weights:")
-    bw = result.best_strat_dict.get("weights", {})
-    for comp, wval in sorted(bw.items(), key=lambda x: x[1], reverse=True):
-        print(f"    {comp:<14}: {wval:.1f}%")
+    entry_cfg = result.best_strat_dict.get("entry", {})
+    exit_cfg = result.best_strat_dict.get("exit", {})
+    print(f"\n  Best entry scores (Buy ≥ {entry_cfg.get('threshold', 0):.0f}, "
+          f"window {entry_cfg.get('conf_window', 0)}):")
+    for comp, wval in entry_cfg.get("weights", {}).items():
+        print(f"    {comp:<20}: {wval:.1f}")
+    print(f"  Best exit scores (Sell ≥ {exit_cfg.get('threshold', 0):.0f}, "
+          f"window {exit_cfg.get('conf_window', 0)}):")
+    for comp, wval in exit_cfg.get("weights", {}).items():
+        print(f"    {comp:<20}: {wval:.1f}")
 
     print(f"\n  Candidate config: {candidate_path}")
     print(f"  Report          : {report_path}")
+    print(f"  Trials CSV      : {csv_path}  ({len(result.trial_records)} rows)")
     print(f"\n{'═'*w}\n")
 
     # ── How to promote ────────────────────────────────────────────────────────
@@ -257,10 +247,10 @@ def main() -> None:
     print("  4. Restart backend:      scripts/launch.sh --no-build")
     print()
     print("  ─── HOW TO RE-RUN ──────────────────────────────────────")
-    print("  Long strategy:")
-    print("    uv run python scripts/optimize.py --strategy long --universe watchlist")
-    print("  With scoring tables (aggressive, higher overfit risk):")
-    print("    uv run python scripts/optimize.py --strategy long --include-scoring-tables")
+    print("  Default (watchlist universe):")
+    print("    uv run python scripts/optimize.py --universe watchlist")
+    print("  Also tune the confluence windows (aggressive, higher overfit risk):")
+    print("    uv run python scripts/optimize.py --include-scoring-tables")
     print()
 
 

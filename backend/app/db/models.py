@@ -15,7 +15,10 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, create_engine, inspect, text
+from sqlalchemy import (
+    Boolean, Column, Float, ForeignKey, Integer, String, UniqueConstraint,
+    create_engine, inspect, text,
+)
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 # Match the existing parents[4] convention so signals.db lands in the
@@ -84,20 +87,27 @@ class Signal(Base):
 
 
 class WatchlistEntry(Base):
-    """User-managed watchlist stored in SQLite.
+    """User-managed watchlist entry stored in SQLite.
 
-    Seeded from data/watchlist.csv on first startup; managed via the API thereafter.
+    Each entry belongs to a named list (``list_name``); the app supports several
+    watchlists (e.g. "Watchlist", "Watchlist - ChinaTech"). A symbol is unique
+    within a list but may appear in more than one list. Seeded from
+    data/watchlist.csv on first startup; managed via the API thereafter.
     """
 
     __tablename__ = "watchlist"
+    __table_args__ = (
+        UniqueConstraint("list_name", "symbol", name="uq_watchlist_list_symbol"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    symbol = Column(String, nullable=False, unique=True)
+    list_name = Column(String, nullable=False, server_default="Watchlist")
+    symbol = Column(String, nullable=False)
     added_at = Column(String, nullable=False)  # ISO 8601 UTC datetime
     note = Column(String, nullable=True)
 
     def __repr__(self) -> str:
-        return f"<WatchlistEntry {self.symbol!r} added={self.added_at!r}>"
+        return f"<WatchlistEntry {self.list_name!r}/{self.symbol!r} added={self.added_at!r}>"
 
 
 # ── Engine / session helpers ───────────────────────────────────────────────────
@@ -144,6 +154,30 @@ def migrate_db(engine) -> None:
             if "strategy" not in existing:
                 conn.execute(text("ALTER TABLE runs ADD COLUMN strategy TEXT NOT NULL DEFAULT 'long'"))
             conn.commit()
+
+    # Migration for the watchlist table: add list_name + composite uniqueness.
+    # SQLite can't drop the old UNIQUE(symbol) in place, so rebuild the table:
+    # existing rows migrate into the default "Watchlist" list.
+    if "watchlist" in insp.get_table_names():
+        existing = {col["name"] for col in insp.get_columns("watchlist")}
+        if "list_name" not in existing:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "CREATE TABLE watchlist_new ("
+                    " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    " list_name TEXT NOT NULL DEFAULT 'Watchlist',"
+                    " symbol TEXT NOT NULL,"
+                    " added_at TEXT NOT NULL,"
+                    " note TEXT,"
+                    " UNIQUE(list_name, symbol))"
+                ))
+                conn.execute(text(
+                    "INSERT INTO watchlist_new (id, list_name, symbol, added_at, note)"
+                    " SELECT id, 'Watchlist', symbol, added_at, note FROM watchlist"
+                ))
+                conn.execute(text("DROP TABLE watchlist"))
+                conn.execute(text("ALTER TABLE watchlist_new RENAME TO watchlist"))
+                conn.commit()
 
 
 def make_session_factory(db_path: Path | str | None = None):

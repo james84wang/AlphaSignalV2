@@ -24,7 +24,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 from backend.app.config import load_config
 from backend.app.data.cache import ParquetCache
 from backend.app.data.yfinance_provider import YFinanceProvider
-from backend.app.scoring.composite import run_engine
+from backend.app.scoring.confluence import run_engine
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 
@@ -62,13 +62,14 @@ def main() -> None:
     print(f"{'='*60}")
     print(f"  Composite : {latest['composite']:.4f}")
     print(f"  Signal    : {latest['signal']}")
-    print(f"  Regime    : long_allowed={latest['regime']['long_allowed']}"
-          f"  short_allowed={latest['regime']['short_allowed']}")
+    print(f"  Regime    : long_allowed={latest['regime']['long_allowed']}")
+    print(f"  Entry score: {latest['entry_score']:.1f}   Exit score: {latest['exit_score']:.1f}")
     print(f"{'─'*60}")
-    print(f"  {'Component':<12} {'Sub':>7} {'Weight':>7} {'Weighted':>10}")
-    print(f"  {'─'*42}")
+    print(f"  {'Component':<20} {'Side':>6} {'Weight':>7} {'Fired':>6} {'Contrib':>9}")
+    print(f"  {'─'*52}")
     for name, data in latest["components"].items():
-        print(f"  {name:<12} {data['sub']:>7.2f} {data['weight']:>7.0f} {data['weighted']:>10.4f}")
+        print(f"  {name:<20} {data['side']:>6} {data['weight']:>7.0f} "
+              f"{str(data['fired']):>6} {data['contribution']:>9.2f}")
     print(f"{'='*60}")
 
     # Also dump the full JSON audit object for inspection

@@ -7,6 +7,8 @@ from datetime import date
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import desc
 
+from backend.app.config import load_config
+from backend.app.data.watchlists import is_valid_universe
 from backend.app.db.models import Run, Signal, make_session_factory
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
@@ -14,17 +16,14 @@ router = APIRouter(prefix="/api/signals", tags=["signals"])
 _SESSION = make_session_factory()
 
 
-_VALID_UNIVERSES = ("watchlist", "sp500", "combined", "midcap", "smallcap", "nasdaq100")
-
-
 @router.get("")
 def get_signals(
     date_param: str | None = Query(None, alias="date", description="YYYY-MM-DD"),
-    universe: str = Query("combined", description="watchlist | sp500 | combined | midcap | smallcap | nasdaq100"),
+    universe: str = Query("combined", description="wl:<name> | watchlist | sp500 | combined | midcap | smallcap | nasdaq100"),
 ) -> dict:
     """Return the ranked signal table from the most recent run matching the filters."""
-    if universe not in _VALID_UNIVERSES:
-        raise HTTPException(422, detail=f"universe must be one of {_VALID_UNIVERSES}")
+    if not is_valid_universe(universe, load_config()):
+        raise HTTPException(422, detail=f"Unknown universe {universe!r}")
 
     with _SESSION() as session:
         q = session.query(Run).filter(Run.universe == universe).order_by(desc(Run.id))

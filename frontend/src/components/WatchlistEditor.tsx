@@ -1,40 +1,52 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchWatchlist, addToWatchlist, removeFromWatchlist } from "../lib/api";
+import { fetchWatchlists, addToWatchlist, removeFromWatchlist } from "../lib/api";
 import { LoadingState } from "./LoadingState";
 import { useLang } from "../lib/LanguageContext";
 
 export function WatchlistEditor() {
   const qc = useQueryClient();
   const { t } = useLang();
+  const [activeList, setActiveList] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["watchlist"],
-    queryFn: fetchWatchlist,
+    queryKey: ["watchlists"],
+    queryFn: fetchWatchlists,
   });
 
+  // Default the active tab to the first list once loaded.
+  useEffect(() => {
+    if (data && activeList === null && data.lists.length > 0) {
+      setActiveList(data.lists[0].name);
+    }
+  }, [data, activeList]);
+
   const addMutation = useMutation({
-    mutationFn: (sym: string) => addToWatchlist(sym.trim().toUpperCase()),
+    mutationFn: (sym: string) => addToWatchlist(activeList!, sym),
     onSuccess: () => {
       setInput("");
       setAddError(null);
-      qc.invalidateQueries({ queryKey: ["watchlist"] });
+      qc.invalidateQueries({ queryKey: ["watchlists"] });
+      qc.invalidateQueries({ queryKey: ["signals"] });
     },
     onError: (e: Error) => setAddError(e.message),
   });
 
   const removeMutation = useMutation({
-    mutationFn: (sym: string) => removeFromWatchlist(sym),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["watchlist"] }),
+    mutationFn: (sym: string) => removeFromWatchlist(activeList!, sym),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["watchlists"] });
+      qc.invalidateQueries({ queryKey: ["signals"] });
+    },
   });
 
   function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     const sym = input.trim().toUpperCase();
-    if (!sym) return;
-    if (!/^[A-Z0-9]{1,10}$/.test(sym)) {
+    if (!sym || !activeList) return;
+    if (!/^[A-Z0-9.\-]{1,10}$/.test(sym)) {
       setAddError(t("watchlist_symbol_error"));
       return;
     }
@@ -42,42 +54,58 @@ export function WatchlistEditor() {
     addMutation.mutate(sym);
   }
 
+  if (isLoading) return <LoadingState label={t("watchlist_loading")} />;
+  if (!data) return null;
+
+  const current = data.lists.find((l) => l.name === activeList) ?? data.lists[0];
+
   return (
     <div className="bg-slate-900 rounded-xl border border-slate-700 p-5 space-y-4">
-      <h2 className="text-sm font-semibold text-slate-200">{t("watchlist_title")}</h2>
+      <p className="text-xs text-slate-500">{t("watchlists_desc")}</p>
 
-      {isLoading ? (
-        <LoadingState label={t("watchlist_loading")} />
-      ) : (
-        <div className="space-y-1 max-h-48 overflow-y-auto">
-          {!data || data.symbols.length === 0 ? (
-            <p className="text-xs text-slate-500 italic">{t("watchlist_empty")}</p>
-          ) : (
-            data.symbols.map((entry) => (
-              <div
-                key={entry.symbol}
-                className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-slate-800 group"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-semibold text-slate-100 font-mono">
-                    {entry.symbol}
-                  </span>
-                  {entry.note && (
-                    <span className="text-xs text-slate-500">{entry.note}</span>
-                  )}
-                </div>
-                <button
-                  onClick={() => removeMutation.mutate(entry.symbol)}
-                  disabled={removeMutation.isPending}
-                  className="text-slate-600 hover:text-red-400 transition-colors text-xs px-2 py-0.5 rounded hover:bg-red-950/40"
-                >
-                  {t("remove")}
-                </button>
+      {/* List tabs */}
+      <div className="flex flex-wrap gap-1 bg-slate-800 rounded-lg p-1 w-fit">
+        {data.lists.map((l) => (
+          <button
+            key={l.name}
+            onClick={() => { setActiveList(l.name); setAddError(null); }}
+            className={`px-3 py-1.5 rounded text-xs font-semibold transition-all ${
+              current?.name === l.name
+                ? "bg-cyan-600/30 text-cyan-200 border border-cyan-500/40"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            {l.name}
+            <span className="ml-1.5 text-slate-500">{l.count}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Symbols in the active list */}
+      <div className="space-y-1 max-h-56 overflow-y-auto">
+        {!current || current.symbols.length === 0 ? (
+          <p className="text-xs text-slate-500 italic">{t("watchlist_empty")}</p>
+        ) : (
+          current.symbols.map((entry) => (
+            <div
+              key={entry.symbol}
+              className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-slate-800 group"
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-slate-100 font-mono">{entry.symbol}</span>
+                {entry.note && <span className="text-xs text-slate-500">{entry.note}</span>}
               </div>
-            ))
-          )}
-        </div>
-      )}
+              <button
+                onClick={() => removeMutation.mutate(entry.symbol)}
+                disabled={removeMutation.isPending}
+                className="text-slate-600 hover:text-red-400 transition-colors text-xs px-2 py-0.5 rounded hover:bg-red-950/40"
+              >
+                {t("remove")}
+              </button>
+            </div>
+          ))
+        )}
+      </div>
 
       {/* Add form */}
       <form onSubmit={handleAdd} className="flex gap-2">

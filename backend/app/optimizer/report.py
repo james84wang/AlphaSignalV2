@@ -1,6 +1,7 @@
 """Generate a human-readable Markdown optimisation report."""
 from __future__ import annotations
 
+import csv
 import math
 from datetime import date
 from pathlib import Path
@@ -22,6 +23,14 @@ def _f(v: float | None, decimals: int = 2) -> str:
     if v is None:
         return "—"
     return f"{v:.{decimals}f}"
+
+
+def _calmar(m: dict) -> float | None:
+    cagr = m.get("cagr")
+    dd   = m.get("max_drawdown")
+    if cagr is None or dd is None or dd == 0:
+        return None
+    return round(cagr / dd, 3)
 
 
 def generate_report(
@@ -52,6 +61,10 @@ def generate_report(
 
     h1(f"Optimisation Report — {strategy.capitalize()} Strategy — {report_date}")
     p(f"*Generated {report_date} · AlphaSignalV2 MOD-I*")
+    p()
+    p("> ⚠ **SURVIVORSHIP BIAS**: Universe uses current index membership. "
+      "Companies delisted or removed during the backtest period are absent — "
+      "all performance metrics are an upper bound. Estimate: +1–3% CAGR inflation.")
 
     h2("Summary")
     p(f"- **Universe**: {len(symbols)} symbols")
@@ -60,12 +73,19 @@ def generate_report(
     p(f"- **Holdout** (30%): {r.holdout_start} → {r.holdout_end}")
     p(f"- **Trials completed**: {r.n_trials_attempted}")
     p(f"- **Wall clock**: {r.wall_clock_seconds/60:.1f} min")
-    p(f"- **Best in-sample Sharpe**: {_f(is_m.get('sharpe_ratio'))}")
+    p(f"- **Objective function**: mean(WF fold Sharpes) − 0.5×std(WF fold Sharpes) − 1.0×DD-over-15% penalty")
+    p(f"- **Best composite score**: {_f(r.best_composite_score)}")
+    p(f"  - wf_sharpe_mean: {_f(r.best_trial_wf_mean)}")
+    p(f"  - wf_sharpe_std:  {_f(r.best_trial_wf_std)}")
+    for _i, _s in enumerate(r.best_trial_wf_fold_sharpes, 1):
+        p(f"  - fold{_i}\\_sharpe:   {_f(_s)}")
+    p(f"  - dd\\_penalty:      {_f(r.best_trial_dd_penalty)}")
     p()
 
-    # PASS / FAIL verdict
-    verdict_str = "✅ PASS" if r.pass_verdict else "❌ FAIL"
-    h2(f"Verdict: {verdict_str}")
+    # Tier verdict: ROBUST / SUSPECT / OVERFIT
+    tier = getattr(r, "verdict_tier", "OVERFIT")
+    tier_emoji = {"ROBUST": "✅", "SUSPECT": "⚠", "OVERFIT": "❌"}.get(tier, "❌")
+    h2(f"Verdict: {tier_emoji} {tier}")
     for note in r.verdict_notes:
         p(f"- {note}")
 
@@ -107,34 +127,60 @@ def generate_report(
 
     _bm_row("CAGR", "cagr")
     _bm_row("Sharpe", "sharpe_ratio")
+    _bm_row("Sortino", "sortino_ratio")
     _bm_row("Max drawdown", "max_drawdown")
     _bm_row("Total return", "total_return")
+
+    # Calmar rows — derived from metrics dicts
+    strat_calmar = _calmar(h_m)
+    qqq_calmar   = _calmar(h_bm)
+    spy_calmar   = _calmar(r.benchmark_vs_spy_metrics)
+    calmar_beats = "✅" if (strat_calmar or 0.0) > (qqq_calmar or 0.0) else "❌"
+    p(f"| Calmar (CAGR/DD) | {_f(strat_calmar)} | {_f(qqq_calmar)} | {_f(spy_calmar)} | {calmar_beats} |")
+
+    # Risk-adjusted verdict line
+    strat_sharpe_h = h_m.get("sharpe_ratio", 0.0)
+    qqq_sharpe_h   = h_bm.get("sharpe_ratio", 0.0)
+    beats_ra = (strat_sharpe_h > qqq_sharpe_h) and ((strat_calmar or 0.0) > (qqq_calmar or 0.0))
+    p()
+    p(f"**Beats QQQ risk-adjusted (Sharpe AND Calmar both higher)?** "
+      f"{'✅ Yes' if beats_ra else '❌ No'}")
 
     # Degradation warning
     is_sharpe = is_m.get("sharpe_ratio", 0.0)
     h_sharpe  = h_m.get("sharpe_ratio", 0.0)
-    if is_sharpe > 0 and (h_sharpe / is_sharpe) < 0.60:
+    is_oos_gap = is_sharpe - h_sharpe
+    if is_oos_gap > 0.5:
+        p()
+        p(f"> ⚠ **IS→OOS SHARPE GAP = {is_oos_gap:.2f} > 0.50**: IS Sharpe {_f(is_sharpe)} "
+          f"→ Holdout Sharpe {_f(h_sharpe)}. Strong overfitting signal.")
+    elif is_sharpe > 0 and (h_sharpe / is_sharpe) < 0.60:
         p()
         p(f"> ⚠ **LARGE IN-SAMPLE→HOLDOUT DEGRADATION**: Sharpe dropped from "
           f"{_f(is_sharpe)} to {_f(h_sharpe)} ({(h_sharpe/is_sharpe*100):.0f}% of "
           f"in-sample). This is a strong sign of overfitting.")
 
-    # Best weights
-    h2("Best Config — Weights")
-    best_w = r.best_strat_dict.get("weights", {})
-    sorted_w = sorted(best_w.items(), key=lambda x: x[1], reverse=True)
-    p("| Component | Weight |")
-    p("|-----------|--------|")
-    for name, w in sorted_w:
-        p(f"| {name} | {w:.1f}% |")
+    # Best component scores
+    h2("Best Config — Component Scores")
+    entry_w = r.best_strat_dict.get("entry", {}).get("weights", {})
+    exit_w  = r.best_strat_dict.get("exit", {}).get("weights", {})
+    p("| Side | Component | Score |")
+    p("|------|-----------|-------|")
+    for name, w in entry_w.items():
+        p(f"| entry | {name} | {w:.1f} |")
+    for name, w in exit_w.items():
+        p(f"| exit | {name} | {w:.1f} |")
 
-    # Best thresholds
-    h2("Best Config — Thresholds")
-    best_t = r.best_strat_dict.get("thresholds", {})
-    p("| Signal | Threshold |")
-    p("|--------|-----------|")
-    for k, v in best_t.items():
-        p(f"| {k} | {v:+.1f} |")
+    # Best thresholds & windows
+    h2("Best Config — Thresholds & Windows")
+    entry_cfg = r.best_strat_dict.get("entry", {})
+    exit_cfg  = r.best_strat_dict.get("exit", {})
+    p("| Parameter | Value |")
+    p("|-----------|-------|")
+    p(f"| Entry threshold (Buy ≥) | {entry_cfg.get('threshold', 0):.1f} |")
+    p(f"| Entry confluence window | {entry_cfg.get('conf_window', 0)} |")
+    p(f"| Exit threshold (Sell ≥) | {exit_cfg.get('threshold', 0):.1f} |")
+    p(f"| Exit confluence window | {exit_cfg.get('conf_window', 0)} |")
 
     # Walk-forward folds
     h2("Walk-Forward Folds")
@@ -152,22 +198,28 @@ def generate_report(
         )
 
     p()
-    wf_beats = wf_m.get("cagr", 0.0) > h_bm.get("cagr", 0.0)
+    wf_sharpe_v = wf_m.get("sharpe_ratio", 0.0)
+    wf_calmar_v = _calmar(wf_m)
+    qqq_sharpe_v = h_bm.get("sharpe_ratio", 0.0)
+    qqq_calmar_v = _calmar(h_bm)
+    wf_beats_ra  = wf_sharpe_v > qqq_sharpe_v and (wf_calmar_v or 0.0) > (qqq_calmar_v or 0.0)
     p(f"**Walk-forward OOS**: Sharpe={_f(wf_m.get('sharpe_ratio'))}, "
+      f"Calmar={_f(wf_calmar_v)}, "
       f"CAGR={_pct(wf_m.get('cagr'))}, MaxDD={_pct(wf_m.get('max_drawdown'))}")
-    p(f"**Beats QQQ on OOS**: {'✅ Yes' if wf_beats else '❌ No'}")
+    p(f"**Beats QQQ risk-adjusted (Sharpe AND Calmar)**: {'✅ Yes' if wf_beats_ra else '❌ No'}")
 
     # Anti-overfitting
     h2("Anti-Overfitting Analysis")
 
     h3("1. Luck Audit")
     la = r.luck_audit
+    p(f"- Win criterion: *{la.get('win_criterion', 'beats QQQ on Sharpe AND Calmar')}*")
     p(f"- Completed trials: {la.get('n_completed_trials', 0)}")
     p(f"- Top 200 trials evaluated on holdout: {la.get('top_200_evaluated_on_holdout', 0)} configs")
-    p(f"- Holdout 'winners' (beat QQQ): {la.get('n_holdout_winners', 0)} "
+    p(f"- Holdout winners (risk-adjusted): {la.get('n_holdout_winners', 0)} "
       f"({la.get('holdout_win_rate', 0)*100:.1f}%)")
     p(f"- Random null configs evaluated: {la.get('null_trials', 0)}")
-    p(f"- Random null 'winners': {la.get('null_holdout_wins', 0)} "
+    p(f"- Random null winners: {la.get('null_holdout_wins', 0)} "
       f"({la.get('null_win_rate', 0)*100:.1f}%)")
     p()
     p(f"**{la.get('assessment', '')}**")
@@ -211,15 +263,17 @@ def generate_report(
 
     # Honest assessment
     h2("Honest Assessment")
-    p("The 10%-CAGR-over-QQQ goal is **very aggressive**. Any config achieving it "
-      "must be treated as **SUSPECTED OVERFIT** until confirmed by:")
-    p("- Passing the walk-forward check above")
-    p("- Passing the perturbation stability test")
-    p("- Positive live paper-trading results over ≥6 months")
+    p("A ROBUST verdict requires **all three** to be true:")
+    p("- Walk-forward Sharpe > QQQ Sharpe (true OOS risk-adjusted return quality)")
+    p("- Walk-forward Calmar > QQQ Calmar (true OOS drawdown efficiency)")
+    p("- Walk-forward max drawdown ≤ 15% (retail risk tolerance)")
+    p("- IS→OOS Sharpe gap ≤ 0.50 (no excessive overfitting signal)")
     p()
-    p("> **SURVIVORSHIP BIAS**: The universe uses CURRENT index membership. "
-      "Companies delisted or removed during the backtest period are absent — "
-      "this inflates all performance metrics. Treat results as an upper bound.")
+    p("Even a ROBUST verdict must be confirmed by positive live paper-trading "
+      "results over ≥ 6 months before any capital is risked.")
+    p()
+    p("> **SURVIVORSHIP BIAS**: Universe uses current index membership — "
+      "see header note. All returns are upper-bound estimates.")
 
     # Candidate file location
     h2("Candidate Config")
@@ -234,4 +288,30 @@ def generate_report(
 
     content = "\n".join(lines)
     out.write_text(content)
+    return out
+
+
+def write_trials_csv(
+    opt_result: "OptimisationResult",
+    strategy: str,
+    report_date: date | None = None,
+) -> Path:
+    """Write per-trial score components and weights to reports/trials_<strategy>_<date>.csv."""
+    _REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    if report_date is None:
+        report_date = date.today()
+    out = _REPORTS_DIR / f"trials_{strategy}_{report_date}.csv"
+
+    records = opt_result.trial_records
+    if not records:
+        out.write_text("trial_number,composite_score,is_sharpe,oos_sharpe,is_oos_gap,"
+                       "gap_penalty,max_dd_pct,dd_penalty\n")
+        return out
+
+    fieldnames = list(records[0].keys())
+    with out.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(records)
+
     return out

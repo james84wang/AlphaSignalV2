@@ -50,7 +50,7 @@ from backend.app.data.cache import ParquetCache
 from backend.app.data.universe import Universe
 from backend.app.data.yfinance_provider import YFinanceProvider
 from backend.app.db.models import Run, Signal, config_hash, make_session_factory
-from backend.app.scoring.composite import run_engine
+from backend.app.scoring.confluence import run_engine
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 _CONFIG_PATH = _REPO_ROOT / "config.yaml"
@@ -88,9 +88,9 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--strategy",
-        choices=["long", "short"],
-        default="long",
-        help="Strategy profile to score against: 'long' (default) or 'short'.",
+        choices=["hidden_div"],
+        default="hidden_div",
+        help="Strategy profile (long-only Hidden-Divergence Confluence).",
     )
     parser.add_argument(
         "--date",
@@ -221,7 +221,7 @@ def main() -> None:
                 fallback_note = f" [using {bar['date']}]"
 
             sub_scores = {
-                name: round(comp["sub"], 4)
+                name: round(comp["contribution"], 4)
                 for name, comp in bar["components"].items()
             }
 

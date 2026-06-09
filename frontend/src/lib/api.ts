@@ -5,16 +5,17 @@ import type {
   SignalAudit,
   ConfigResponse,
   PutConfigResponse,
-  ConfigWeights,
   ProfileUpdate,
   DailyRunResponse,
   BacktestJobResponse,
   BacktestResult,
   MarketOverviewResponse,
-  WatchlistResponse,
-  WatchlistEntry,
-  InverseEtfMapResponse,
+  WatchlistsResponse,
   ScheduleStatus,
+  OptimizeRequest,
+  OptimizeStartResponse,
+  OptimizeStatus,
+  PromoteResponse,
 } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
@@ -99,36 +100,43 @@ export function fetchSignalAudit(symbol: string, date?: string) {
   return get<SignalAudit>(`/api/symbols/${symbol}/signal`, p);
 }
 
-// ── Config (per-strategy) ────────────────────────────────────────────────────
+// ── Config (single long-only strategy) ───────────────────────────────────────
 
-export function fetchConfigStrategy(strategy: "long" | "short") {
-  return get<ConfigResponse>(`/api/config/${strategy}`);
-}
-
-export function putConfigStrategy(strategy: "long" | "short", payload: ProfileUpdate) {
-  return put<PutConfigResponse>(`/api/config/${strategy}`, payload);
-}
-
-/** @deprecated Use fetchConfigStrategy("long") */
 export function fetchConfig() {
-  return fetchConfigStrategy("long");
+  return get<ConfigResponse>("/api/config/hidden_div");
 }
 
-/** @deprecated Use putConfigStrategy */
-export function putWeights(weights: ConfigWeights) {
-  return putConfigStrategy("long", { weights });
+export function putConfig(payload: ProfileUpdate) {
+  return put<PutConfigResponse>("/api/config/hidden_div", payload);
+}
+
+/**
+ * Download the saved strategy as a TradingView Pine Script (v6). Fetches the
+ * generated text from the backend and triggers a browser file download.
+ */
+export async function downloadPineScript(): Promise<void> {
+  const res = await fetch(`${BASE}/api/config/hidden_div/pine`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`${res.status}: ${text}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "hidden_div_confluence_uptrend.pine";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ── Daily runs ───────────────────────────────────────────────────────────────
 
-export function postDailyRun(params?: {
-  universe?: string;
-  strategy?: "long" | "short";
-  date?: string;
-}) {
+export function postDailyRun(params?: { universe?: string; date?: string }) {
   return post<DailyRunResponse>("/api/runs/daily", {
     universe: params?.universe ?? "combined",
-    strategy: params?.strategy ?? "long",
+    strategy: "hidden_div",
     ...(params?.date ? { date: params.date } : {}),
   });
 }
@@ -144,11 +152,8 @@ export function postBacktest(params: {
   symbols?: string[];
   start?: string;
   end?: string;
-  strategy?: string;
   initial_fund?: number;
-  initial_account?: number;
   slippage_pct?: number;
-  commission?: number;
   fee_per_share?: number;
   fee_min?: number;
   fee_max_pct_of_trade?: number;
@@ -162,11 +167,30 @@ export function postBacktest(params: {
   benchmark_symbol?: string;
   risk_free_rate?: number;
 }) {
-  return post<BacktestJobResponse>("/api/backtest", params);
+  return post<BacktestJobResponse>("/api/backtest", { strategy: "hidden_div", ...params });
 }
 
 export function fetchBacktest(jobId: string) {
   return get<BacktestResult>(`/api/backtest/${jobId}`);
+}
+
+// ── Optimiser ────────────────────────────────────────────────────────────────
+
+export function postOptimize(body: OptimizeRequest) {
+  return post<OptimizeStartResponse>("/api/optimize", body);
+}
+
+export function fetchOptimize(jobId: string) {
+  return get<OptimizeStatus>(`/api/optimize/${jobId}`);
+}
+
+export function promoteCandidate(jobId: string) {
+  return post<PromoteResponse>(`/api/optimize/${jobId}/promote`, {});
+}
+
+/** URL of the markdown optimisation report (opened in a new tab / downloaded). */
+export function optimizeReportUrl(jobId: string): string {
+  return `${BASE}/api/optimize/${jobId}/report`;
 }
 
 // ── Market overview ──────────────────────────────────────────────────────────
@@ -177,24 +201,23 @@ export function fetchMarketOverview(refresh = false) {
   return get<MarketOverviewResponse>("/api/market/overview", p);
 }
 
-// ── Watchlist ────────────────────────────────────────────────────────────────
+// ── Watchlists (multiple named lists) ─────────────────────────────────────────
 
-export function fetchWatchlist() {
-  return get<WatchlistResponse>("/api/watchlist");
+export function fetchWatchlists() {
+  return get<WatchlistsResponse>("/api/watchlists");
 }
 
-export function addToWatchlist(symbol: string, note?: string) {
-  return post<WatchlistEntry>("/api/watchlist", { symbol, note: note ?? null });
+export function addToWatchlist(listName: string, symbol: string, note?: string) {
+  return post<{ list_name: string; symbol: string; added_at: string; note: string | null }>(
+    `/api/watchlists/${encodeURIComponent(listName)}/symbols`,
+    { symbol, note: note ?? null },
+  );
 }
 
-export function removeFromWatchlist(symbol: string) {
-  return del<{ ok: boolean; symbol: string }>(`/api/watchlist/${symbol}`);
-}
-
-// ── Inverse ETFs ─────────────────────────────────────────────────────────────
-
-export function fetchInverseEtfs() {
-  return get<InverseEtfMapResponse>("/api/inverse-etfs");
+export function removeFromWatchlist(listName: string, symbol: string) {
+  return del<{ ok: boolean; list_name: string; symbol: string }>(
+    `/api/watchlists/${encodeURIComponent(listName)}/symbols/${encodeURIComponent(symbol)}`,
+  );
 }
 
 // ── Schedule ─────────────────────────────────────────────────────────────────

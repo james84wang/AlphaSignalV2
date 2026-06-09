@@ -1,44 +1,64 @@
-import type { SignalAudit, ComponentKey } from "../lib/types";
+import type { SignalAudit, ConfluenceComponent } from "../lib/types";
+import { ENTRY_COMPONENTS, EXIT_COMPONENTS } from "../lib/types";
 import { SignalBadge } from "./SignalBadge";
+import { useLang } from "../lib/LanguageContext";
 
-const COMPONENT_LABELS: Record<ComponentKey, string> = {
-  candlestick: "Candlestick",
-  p3: "3-Bar Pattern",
-  p5: "5-Bar Pattern",
-  volume: "Volume",
-  ema: "EMA System",
-  sr: "Support/Resistance",
-  macd: "MACD",
-  rsi: "RSI",
+const COMPONENT_LABEL_KEY: Record<string, Parameters<ReturnType<typeof useLang>["t"]>[0]> = {
+  macd_hidden_bull: "w_macd_hidden_bull",
+  rsi_hidden_bull: "w_rsi_hidden_bull",
+  rsi_zone: "w_rsi_zone",
+  demark_td9_buy: "w_demark_td9_buy",
+  demark_td13_sell: "w_demark_td13_sell",
+  macd_regular_bear: "w_macd_regular_bear",
+  rsi_regular_bear: "w_rsi_regular_bear",
+  demark_td9_sell: "w_demark_td9_sell",
 };
-
-function ScoreBar({ value }: { value: number }) {
-  const pct = ((value + 100) / 200) * 100;
-  const color =
-    value >= 50
-      ? "bg-emerald-500"
-      : value >= 0
-      ? "bg-green-500"
-      : value >= -50
-      ? "bg-orange-500"
-      : "bg-red-500";
-  return (
-    <div className="relative h-1.5 w-full bg-slate-700 rounded-full overflow-hidden">
-      <div
-        className={`absolute left-1/2 h-full rounded-full ${color}`}
-        style={{
-          width: `${Math.abs(value) / 2}%`,
-          transform: value >= 0 ? "translateX(0)" : "translateX(-100%)",
-        }}
-      />
-      {/* Center line */}
-      <div className="absolute left-1/2 top-0 w-px h-full bg-slate-500" />
-    </div>
-  );
-}
 
 function fmt(n: number) {
   return n.toFixed(1);
+}
+
+function ComponentTable({
+  title,
+  names,
+  components,
+  accent,
+}: {
+  title: string;
+  names: readonly string[];
+  components: Record<string, ConfluenceComponent>;
+  accent: string;
+}) {
+  const { t } = useLang();
+  return (
+    <div className="bg-slate-800/40 rounded-xl border border-slate-700 overflow-hidden">
+      <div className="px-4 py-2 border-b border-slate-700">
+        <span className={`text-[11px] font-bold uppercase tracking-widest ${accent}`}>{title}</span>
+      </div>
+      <div className="divide-y divide-slate-700/40">
+        {names.map((name) => {
+          const c = components[name];
+          if (!c) return null;
+          return (
+            <div key={name} className="grid grid-cols-[1fr_44px_56px_64px] gap-x-3 items-center px-4 py-2">
+              <span className="text-sm text-slate-200">{t(COMPONENT_LABEL_KEY[name])}</span>
+              <span className="text-right text-xs font-mono text-slate-400">{fmt(c.weight)}</span>
+              <span className={`text-right text-xs font-semibold ${c.fired ? accent : "text-slate-600"}`}>
+                {c.fired ? t("audit_fired") : "—"}
+              </span>
+              <span
+                className={`text-right text-sm font-mono font-semibold ${
+                  c.contribution > 0 ? accent : "text-slate-600"
+                }`}
+              >
+                {fmt(c.contribution)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 interface Props {
@@ -46,19 +66,16 @@ interface Props {
 }
 
 export function AuditPanel({ audit }: Props) {
-  const components = (Object.keys(COMPONENT_LABELS) as ComponentKey[]).map(
-    (key) => ({ key, label: COMPONENT_LABELS[key], ...audit.components[key] })
-  );
+  const { t } = useLang();
+  const uptrend = audit.regime.long_allowed;
 
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-xl p-5">
+    <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-5">
       {/* Header */}
-      <div className="flex items-start justify-between mb-4">
+      <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <span className="text-2xl font-bold text-slate-100">
-              {fmt(audit.composite)}
-            </span>
+            <span className="text-2xl font-bold text-slate-100">{fmt(audit.composite)}</span>
             <SignalBadge signal={audit.signal} />
             <span className="text-xs text-slate-500 uppercase">
               {audit.source === "db" ? "from DB" : "computed"}
@@ -67,59 +84,50 @@ export function AuditPanel({ audit }: Props) {
           <p className="text-xs text-slate-500 mt-1">{audit.date}</p>
         </div>
 
-        {/* Regime gate */}
-        <div className="text-right text-xs space-y-1">
-          <div
-            className={`font-medium ${
-              audit.regime.long_allowed ? "text-green-400" : "text-slate-500 line-through"
-            }`}
-          >
-            Long allowed
-          </div>
-          <div
-            className={`font-medium ${
-              audit.regime.short_allowed ? "text-red-400" : "text-slate-500 line-through"
-            }`}
-          >
-            Short allowed
-          </div>
+        {/* Regime gate (long-only) */}
+        <div
+          className={`text-xs font-semibold px-3 py-1.5 rounded-lg border ${
+            uptrend
+              ? "border-emerald-500/40 bg-emerald-950/30 text-emerald-300"
+              : "border-slate-600 bg-slate-800/40 text-slate-400"
+          }`}
+        >
+          {uptrend ? t("regime_uptrend") : t("regime_no_uptrend")}
         </div>
       </div>
 
-      {/* Component breakdown table */}
-      <div className="space-y-2">
-        <div className="grid grid-cols-[1fr_60px_56px_72px] gap-x-3 text-xs text-slate-500 uppercase font-medium px-1 mb-1">
-          <span>Component</span>
-          <span className="text-right">Sub</span>
-          <span className="text-right">Weight</span>
-          <span className="text-right">Contrib</span>
+      {/* Entry / Exit score summary */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-slate-800 rounded-xl px-4 py-3">
+          <p className="text-xs text-slate-500 mb-1">{t("audit_entry_score")}</p>
+          <p className="text-lg font-bold font-mono text-emerald-400">{fmt(audit.entry_score)}</p>
         </div>
-        {components.map(({ key, label, sub, weight, weighted }) => (
-          <div key={key} className="grid grid-cols-[1fr_60px_56px_72px] gap-x-3 items-center px-1 py-1.5 rounded-lg hover:bg-slate-800 transition-colors">
-            <div>
-              <div className="text-sm text-slate-200 mb-1">{label}</div>
-              <ScoreBar value={sub} />
-            </div>
-            <span
-              className={`text-right text-sm font-mono font-semibold ${
-                sub >= 0 ? "text-green-400" : "text-red-400"
-              }`}
-            >
-              {fmt(sub)}
-            </span>
-            <span className="text-right text-sm font-mono text-slate-400">
-              {fmt(weight)}%
-            </span>
-            <span
-              className={`text-right text-sm font-mono font-semibold ${
-                weighted >= 0 ? "text-green-300" : "text-red-300"
-              }`}
-            >
-              {weighted >= 0 ? "+" : ""}
-              {fmt(weighted)}
-            </span>
-          </div>
-        ))}
+        <div className="bg-slate-800 rounded-xl px-4 py-3">
+          <p className="text-xs text-slate-500 mb-1">{t("audit_exit_score")}</p>
+          <p className="text-lg font-bold font-mono text-orange-400">{fmt(audit.exit_score)}</p>
+        </div>
+      </div>
+
+      {/* Component breakdown */}
+      <div className="space-y-3">
+        <div className="grid grid-cols-[1fr_44px_56px_64px] gap-x-3 text-[10px] text-slate-500 uppercase font-medium px-4">
+          <span>{t("audit_entry_components")}</span>
+          <span className="text-right">Wt</span>
+          <span className="text-right">Hit</span>
+          <span className="text-right">Pts</span>
+        </div>
+        <ComponentTable
+          title={t("audit_entry_components")}
+          names={ENTRY_COMPONENTS}
+          components={audit.components}
+          accent="text-emerald-400"
+        />
+        <ComponentTable
+          title={t("audit_exit_components")}
+          names={EXIT_COMPONENTS}
+          components={audit.components}
+          accent="text-orange-400"
+        />
       </div>
     </div>
   );

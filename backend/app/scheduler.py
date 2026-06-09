@@ -71,20 +71,19 @@ def save_settings(settings: dict) -> None:
 # ── Scheduled job ─────────────────────────────────────────────────────────────
 
 def _run_both_strategies() -> None:
-    """Run long + short signals over the combined universe. Called by APScheduler."""
+    """Run the hidden_div signals over the combined universe. Called by APScheduler."""
     today = str(date.today())
     logger.info("[scheduler] Starting scheduled daily run for %s", today)
 
-    for strategy in ("long", "short"):
-        try:
-            job = create_job(
-                "scheduled_daily_run",
-                meta={"universe": "combined", "strategy": strategy, "date": today, "source": "scheduler"},
-            )
-            _run_daily_task(job.id, "combined", strategy, date.today())
-            logger.info("[scheduler] Finished %s strategy run (job %s)", strategy, job.id)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("[scheduler] %s strategy run failed: %s", strategy, exc)
+    try:
+        job = create_job(
+            "scheduled_daily_run",
+            meta={"universe": "combined", "strategy": "hidden_div", "date": today, "source": "scheduler"},
+        )
+        _run_daily_task(job.id, "combined", date.today())
+        logger.info("[scheduler] Finished scheduled run (job %s)", job.id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[scheduler] Scheduled run failed: %s", exc)
 
     settings = load_settings()
     settings["last_run_date"] = today

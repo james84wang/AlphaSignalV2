@@ -1,163 +1,88 @@
 /**
- * Export Long + Short strategy settings to a formatted .xlsx workbook.
- * Each strategy gets its own worksheet with sections for Weights,
- * Thresholds, and all eight Scoring Tables.
+ * Export the Hidden-Divergence Confluence strategy settings to a formatted
+ * .xlsx workbook: entry weights + threshold, exit weights + threshold, and the
+ * underlying indicator parameters.
  */
 import * as XLSX from "xlsx";
 import type { ConfigResponse } from "./types";
 
-const WEIGHT_LABELS: Record<string, string> = {
-  candlestick: "Candlestick Pattern",
-  p3: "3-Bar Pattern (P3)",
-  p5: "5-Bar Pattern (P5)",
-  volume: "Volume",
-  ema: "EMA System",
-  sr: "Support / Resistance",
-  macd: "MACD",
-  rsi: "RSI",
+const ENTRY_LABELS: Record<string, string> = {
+  macd_hidden_bull: "MACD hidden bullish divergence",
+  rsi_hidden_bull: "RSI hidden bullish divergence",
+  rsi_zone: "RSI pullback zone (40–55)",
+  demark_td9_buy: "DeMark TD9 buy setup",
 };
 
-const THRESHOLD_LABELS: Record<string, string> = {
-  strong_buy: "Strong Buy",
-  buy: "Buy",
-  sell: "Sell",
-  strong_sell: "Strong Sell",
+const EXIT_LABELS: Record<string, string> = {
+  demark_td13_sell: "DeMark TD13 sell countdown",
+  macd_regular_bear: "MACD regular bearish divergence",
+  rsi_regular_bear: "RSI regular bearish divergence",
+  demark_td9_sell: "DeMark TD9 sell setup",
 };
 
-const SCORING_TABLE_LABELS: Array<{
-  key: keyof ReturnType<typeof getScoringTables>;
-  label: string;
-}> = [
-  { key: "candlestick", label: "Candlestick Patterns" },
-  { key: "p3",          label: "3-Bar Patterns (P3)" },
-  { key: "p5",          label: "5-Bar Patterns (P5)" },
-  { key: "ema_stacking", label: "EMA Stacking" },
-  { key: "ema_cross",   label: "EMA Crossovers" },
-  { key: "sr",          label: "Support / Resistance" },
-  { key: "macd",        label: "MACD Micro-Signals" },
-  { key: "rsi",         label: "RSI Zones" },
-];
-
-function getScoringTables(cfg: ConfigResponse) {
-  return {
-    candlestick: cfg.candlestick.scores,
-    p3:          cfg.p3.scores,
-    p5:          cfg.p5.scores,
-    ema_stacking: cfg.ema.stacking_scores,
-    ema_cross:   cfg.ema.cross_scores,
-    sr:          cfg.sr.scores,
-    macd:        cfg.macd.micro_signals,
-    rsi:         cfg.rsi.scores,
-  };
-}
-
-/** Build an array-of-arrays for one strategy sheet. */
-function buildSheetData(label: string, cfg: ConfigResponse): unknown[][] {
+function buildSheetData(cfg: ConfigResponse): unknown[][] {
   const rows: unknown[][] = [];
   const today = new Date().toLocaleDateString("en-US", {
     year: "numeric", month: "long", day: "numeric",
   });
 
-  // ── Title ──────────────────────────────────────────────────────────────────
-  rows.push([`AlphaSignal — ${label} Strategy Settings`]);
+  rows.push(["AlphaSignal — Hidden-Divergence Confluence Strategy"]);
   rows.push([`Exported: ${today}`]);
   rows.push([]);
 
-  // ── Component Weights ──────────────────────────────────────────────────────
-  rows.push(["COMPONENT WEIGHTS"]);
-  rows.push(["Component", "Weight (%)"]);
-  const weightKeys = ["candlestick", "p3", "p5", "volume", "ema", "sr", "macd", "rsi"] as const;
-  let total = 0;
-  for (const k of weightKeys) {
-    const v = cfg.weights[k];
-    rows.push([WEIGHT_LABELS[k] ?? k, v]);
-    total += v;
+  // Entry
+  rows.push(["ENTRY SIGNAL (BUY)"]);
+  rows.push(["Component", "Score"]);
+  let entryMax = 0;
+  for (const [k, lbl] of Object.entries(ENTRY_LABELS)) {
+    const v = cfg.entry.weights[k as keyof typeof cfg.entry.weights];
+    rows.push([lbl, v]);
+    entryMax += v;
   }
-  rows.push(["TOTAL", total]);
+  rows.push(["Max possible entry score", entryMax]);
+  rows.push(["Buy threshold (entry score ≥)", cfg.entry.threshold]);
+  rows.push(["Confluence window (bars)", cfg.entry.conf_window]);
   rows.push([]);
 
-  // ── Signal Thresholds ──────────────────────────────────────────────────────
-  rows.push(["SIGNAL THRESHOLDS"]);
-  rows.push(["Threshold", "Score"]);
-  for (const [k, lbl] of Object.entries(THRESHOLD_LABELS)) {
-    rows.push([lbl, cfg.thresholds[k as keyof typeof cfg.thresholds]]);
+  // Exit
+  rows.push(["EXIT SIGNAL (SELL)"]);
+  rows.push(["Component", "Score"]);
+  let exitMax = 0;
+  for (const [k, lbl] of Object.entries(EXIT_LABELS)) {
+    const v = cfg.exit.weights[k as keyof typeof cfg.exit.weights];
+    rows.push([lbl, v]);
+    exitMax += v;
   }
+  rows.push(["Max possible exit score", exitMax]);
+  rows.push(["Sell threshold (exit score ≥)", cfg.exit.threshold]);
+  rows.push(["Confluence window (bars)", cfg.exit.conf_window]);
   rows.push([]);
 
-  // ── Scoring Tables ─────────────────────────────────────────────────────────
-  rows.push(["SCORING TABLES"]);
-  const tables = getScoringTables(cfg);
-
-  for (const { key, label: tableLabel } of SCORING_TABLE_LABELS) {
-    rows.push([]);
-    rows.push([tableLabel]);
-    rows.push(["Pattern / Signal", "Score"]);
-    const entries = tables[key] ?? {};
-    for (const [pattern, score] of Object.entries(entries)) {
-      rows.push([pattern.replace(/_/g, " "), score]);
+  // Parameters
+  rows.push(["INDICATOR PARAMETERS"]);
+  rows.push(["Group", "Field", "Value"]);
+  const groups: Array<[string, Record<string, number>]> = [
+    ["Regime", cfg.regime as unknown as Record<string, number>],
+    ["Pivots", cfg.pivots as unknown as Record<string, number>],
+    ["MACD", cfg.macd as unknown as Record<string, number>],
+    ["RSI", cfg.rsi as unknown as Record<string, number>],
+    ["DeMark", cfg.demark as unknown as Record<string, number>],
+  ];
+  for (const [group, obj] of groups) {
+    for (const [field, value] of Object.entries(obj)) {
+      rows.push([group, field.replace(/_/g, " "), value]);
     }
   }
 
   return rows;
 }
 
-/** Set column widths and bold header rows in the worksheet. */
-function styleSheet(ws: XLSX.WorkSheet, data: unknown[][]): void {
-  // Column widths: col A = 36 chars, col B = 14 chars
-  ws["!cols"] = [{ wch: 36 }, { wch: 14 }];
-
-  // Bold the title row (row 0), section headers, and column headers
-  const HEADER_ROWS = new Set<number>();
-  HEADER_ROWS.add(0); // title
-  data.forEach((row, r) => {
-    const cell0 = row[0];
-    if (typeof cell0 === "string") {
-      if (
-        cell0 === "COMPONENT WEIGHTS" ||
-        cell0 === "SIGNAL THRESHOLDS" ||
-        cell0 === "SCORING TABLES" ||
-        cell0 === "Component" ||
-        cell0 === "Threshold" ||
-        cell0 === "Pattern / Signal" ||
-        cell0 === "TOTAL" ||
-        SCORING_TABLE_LABELS.some((t) => t.label === cell0)
-      ) {
-        HEADER_ROWS.add(r);
-      }
-    }
-  });
-
-  for (const r of HEADER_ROWS) {
-    const row = data[r];
-    if (!row) continue;
-    row.forEach((_, c) => {
-      const addr = XLSX.utils.encode_cell({ r, c });
-      if (!ws[addr]) return;
-      if (!ws[addr].s) ws[addr].s = {};
-      ws[addr].s.font = { bold: true };
-    });
-  }
-}
-
-/** Download a two-sheet workbook: Long Strategy + Short Strategy. */
-export function exportSettingsToExcel(
-  longConfig: ConfigResponse,
-  shortConfig: ConfigResponse,
-): void {
+export function exportSettingsToExcel(cfg: ConfigResponse): void {
   const wb = XLSX.utils.book_new();
-
-  const longData = buildSheetData("Long", longConfig);
-  const shortData = buildSheetData("Short", shortConfig);
-
-  const wsLong = XLSX.utils.aoa_to_sheet(longData);
-  const wsShort = XLSX.utils.aoa_to_sheet(shortData);
-
-  styleSheet(wsLong, longData);
-  styleSheet(wsShort, shortData);
-
-  XLSX.utils.book_append_sheet(wb, wsLong, "Long Strategy");
-  XLSX.utils.book_append_sheet(wb, wsShort, "Short Strategy");
-
+  const data = buildSheetData(cfg);
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ws["!cols"] = [{ wch: 36 }, { wch: 22 }, { wch: 12 }];
+  XLSX.utils.book_append_sheet(wb, ws, "Strategy");
   const dateTag = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  XLSX.writeFile(wb, `alphasignal_settings_${dateTag}.xlsx`);
+  XLSX.writeFile(wb, `alphasignal_strategy_${dateTag}.xlsx`);
 }

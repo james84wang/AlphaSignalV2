@@ -13,7 +13,7 @@ from backend.app.config import load_config
 from backend.app.data.cache import ParquetCache
 from backend.app.data.yfinance_provider import YFinanceProvider
 from backend.app.db.models import Signal, Run, make_session_factory
-from backend.app.scoring.composite import run_engine
+from backend.app.scoring.confluence import ENTRY_COMPONENTS, EXIT_COMPONENTS, run_engine
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/symbols", tags=["symbols"])
@@ -113,16 +113,20 @@ def get_signal(
         )
 
     if row is not None:
-        sub_scores = json.loads(row.sub_scores_json)
+        contribs = json.loads(row.sub_scores_json)
         cfg = load_config(_CONFIG_PATH)
-        components = {
-            name: {
-                "sub": sub_scores.get(name, 0.0),
-                "weight": float(getattr(cfg.weights, name)),
-                "weighted": round(sub_scores.get(name, 0.0) * float(getattr(cfg.weights, name)) / 100.0, 6),
-            }
-            for name in ("candlestick", "p3", "p5", "volume", "ema", "sr", "macd", "rsi")
-        }
+        strat = cfg.get_strategy("hidden_div")
+        components: dict[str, dict] = {}
+        for name in ENTRY_COMPONENTS:
+            w = float(getattr(strat.entry.weights, name))
+            contrib = float(contribs.get(name, 0.0))
+            components[name] = {"side": "entry", "weight": w, "fired": contrib > 0, "contribution": round(contrib, 4)}
+        for name in EXIT_COMPONENTS:
+            w = float(getattr(strat.exit.weights, name))
+            contrib = float(contribs.get(name, 0.0))
+            components[name] = {"side": "exit", "weight": w, "fired": contrib > 0, "contribution": round(contrib, 4)}
+        entry_score = sum(c["contribution"] for c in components.values() if c["side"] == "entry")
+        exit_score = sum(c["contribution"] for c in components.values() if c["side"] == "exit")
         return {
             "symbol": symbol,
             "date": row.date,
@@ -130,6 +134,8 @@ def get_signal(
             "signal": row.signal,
             "source": "db",
             "regime": {"long_allowed": row.long_allowed, "short_allowed": row.short_allowed},
+            "entry_score": round(entry_score, 4),
+            "exit_score": round(exit_score, 4),
             "components": components,
         }
 
@@ -162,5 +168,7 @@ def get_signal(
         "signal": bar["signal"],
         "source": "computed",
         "regime": bar["regime"],
+        "entry_score": bar["entry_score"],
+        "exit_score": bar["exit_score"],
         "components": bar["components"],
     }

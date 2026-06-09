@@ -31,7 +31,7 @@ class BacktestRun(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     run_timestamp = Column(String, nullable=False)   # ISO 8601 UTC
     config_hash = Column(String, nullable=False)     # first 16 hex of SHA-256(config.yaml)
-    strategy = Column(String, nullable=False, default="long")   # "long" | "short"
+    strategy = Column(String, nullable=False, default="hidden_div")   # "long" | "short"
     params_json = Column(String, nullable=False)     # serialised BacktestResult.params
     metrics_json = Column(String, nullable=False)    # serialised BacktestResult.metrics
     duration_seconds = Column(Float, nullable=False)
@@ -149,7 +149,7 @@ def save_backtest_result(
         run = BacktestRun(
             run_timestamp=datetime.now(tz=timezone.utc).isoformat(),
             config_hash=config_hash,
-            strategy=getattr(result, "strategy", "long"),
+            strategy=getattr(result, "strategy", "hidden_div"),
             params_json=json.dumps(result.params, default=str),
             metrics_json=json.dumps(result.metrics, default=str),
             duration_seconds=round(duration_seconds, 2),

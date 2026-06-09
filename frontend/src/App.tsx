@@ -4,6 +4,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { SymbolView } from "./pages/SymbolView";
 import { Settings } from "./pages/Settings";
 import { Backtest } from "./pages/Backtest";
+import { Optimizer } from "./pages/Optimizer";
 import { About } from "./pages/About";
 
 export default function App() {
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="/symbol/:symbol" element={<SymbolView />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/backtest" element={<Backtest />} />
+        <Route path="/optimizer" element={<Optimizer />} />
         <Route path="/about" element={<About />} />
       </Routes>
     </Layout>

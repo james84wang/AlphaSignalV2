@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { postBacktest, fetchBacktest } from "../lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { postBacktest, fetchBacktest, fetchWatchlists } from "../lib/api";
 import { ProgressBar, type ProgressInfo } from "../components/ProgressBar";
 import { TradeChart } from "../components/TradeChart";
 import { fmtMoney } from "../lib/format";
@@ -438,7 +439,8 @@ export function Backtest() {
   const { t } = useLang();
 
   // Universe & period
-  const [universe, setUniverse] = useState("watchlist");
+  const [universe, setUniverse] = useState("wl:Watchlist");
+  const { data: watchlists } = useQuery({ queryKey: ["watchlists"], queryFn: fetchWatchlists, retry: false });
   const [start, setStart] = useState(fiveYearsAgo);
   const [end, setEnd] = useState(today);
 
@@ -568,6 +570,9 @@ export function Backtest() {
               onChange={(e) => setUniverse(e.target.value)}
               className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500"
             >
+              {(watchlists?.lists ?? []).map((l) => (
+                <option key={l.name} value={`wl:${l.name}`}>{l.name}</option>
+              ))}
               <option value="watchlist">{t("universe_watchlist")}</option>
               <option value="sp500">{t("universe_sp500")}</option>
               <option value="nasdaq100">{t("universe_nasdaq100")}</option>

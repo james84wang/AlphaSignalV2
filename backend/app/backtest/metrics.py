@@ -128,6 +128,13 @@ def compute_strategy_metrics(
         m["sharpe_ratio"] = 0.0
     m["sharpe"] = m["sharpe_ratio"]  # alias
 
+    # Sortino: downside deviation (std of negative returns only)
+    downside = ret[ret < 0]
+    if len(downside) > 1 and downside.std() > 0:
+        m["sortino_ratio"] = round(float(ret.mean() / downside.std() * math.sqrt(252)), 4)
+    else:
+        m["sortino_ratio"] = 0.0
+
     # Exposure: average % of equity deployed (weighted by equity)
     n_open_vals = [e.get("n_open", 0) for e in equity_curve]
     exposed_days = sum(1 for n in n_open_vals if n > 0)
@@ -198,10 +205,17 @@ def compute_benchmark_metrics(
     else:
         sharpe = 0.0
 
+    downside = ret[ret < 0]
+    if len(downside) > 1 and downside.std() > 0:
+        sortino = float(ret.mean() / downside.std() * math.sqrt(252))
+    else:
+        sortino = 0.0
+
     return {
         "total_return": round(total_return, 2),
         "cagr": round(cagr, 2),
         "sharpe_ratio": round(sharpe, 4),
+        "sortino_ratio": round(sortino, 4),
         "max_drawdown": round(max_dd * 100, 2),
         "final_equity": round(final_eq, 2),
     }

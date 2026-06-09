@@ -21,7 +21,7 @@ from backend.app.api.jobs import create_job, fail_job, finish_job, get_job, upda
 from backend.app.backtest.engine import run_backtest
 from backend.app.config import load_config
 from backend.app.data.cache import ParquetCache
-from backend.app.data.universe import Universe, fetch_nasdaq100_symbols, fetch_sp400_symbols, fetch_sp600_symbols
+from backend.app.data.watchlists import is_valid_universe, resolve_universe
 from backend.app.data.yfinance_provider import YFinanceProvider
 from backend.app.db.backtest_models import save_backtest_result
 from backend.app.db.models import config_hash
@@ -39,7 +39,7 @@ class BacktestRequest(BaseModel):
     symbols: Optional[list[str]] = None
     start: Optional[str] = None   # YYYY-MM-DD
     end: Optional[str] = None     # YYYY-MM-DD
-    strategy: str = "long"        # "long" | "short"
+    strategy: str = "hidden_div"        # "long" | "short"
     # MOD-F params (all optional; fall back to config.yaml defaults)
     initial_fund: Optional[float] = None
     initial_account: Optional[float] = None  # backward-compat alias for initial_fund
@@ -65,17 +65,12 @@ def start_backtest(body: BacktestRequest) -> dict:
     """Start a backtest in the background. Returns a job_id to poll."""
     cfg = load_config(_CONFIG_PATH)
 
-    if body.symbols and body.universe:
-        universe_name = None
-    elif body.symbols:
+    if body.symbols:
         universe_name = None
     else:
         universe_name = body.universe or "watchlist"
-        if universe_name not in ("watchlist", "sp500", "combined", "midcap", "smallcap", "nasdaq100"):
-            raise HTTPException(
-                422,
-                detail="universe must be 'watchlist', 'sp500', 'combined', 'midcap', 'smallcap', or 'nasdaq100'",
-            )
+        if not is_valid_universe(universe_name, cfg):
+            raise HTTPException(422, detail=f"Unknown universe {universe_name!r}")
 
     end_date = date.fromisoformat(body.end) if body.end else date.today()
     if body.start:
@@ -86,8 +81,8 @@ def start_backtest(body: BacktestRequest) -> dict:
     if start_date >= end_date:
         raise HTTPException(422, detail="start must be before end")
 
-    if body.strategy not in ("long", "short"):
-        raise HTTPException(422, detail="strategy must be 'long' or 'short'")
+    if body.strategy != "hidden_div":
+        raise HTTPException(422, detail="Only the 'long' strategy is supported")
 
     job = create_job("backtest", meta={
         "universe": universe_name,
@@ -146,34 +141,15 @@ def _run_backtest_task(
     universe_name: str | None,
     start: date,
     end: date,
-    strategy: str = "long",
+    strategy: str = "hidden_div",
 ) -> None:
     try:
         cfg = load_config(_CONFIG_PATH)
 
         if body.symbols:
             symbols = [s.upper() for s in body.symbols]
-        elif universe_name == "watchlist":
-            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
-            symbols = u.watchlist_symbols()
-        elif universe_name == "midcap":
-            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
-            wl = u.watchlist_symbols()
-            symbols = sorted(set(fetch_sp400_symbols()) | set(wl))
-        elif universe_name == "smallcap":
-            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
-            wl = u.watchlist_symbols()
-            symbols = sorted(set(fetch_sp600_symbols()) | set(wl))
-        elif universe_name == "nasdaq100":
-            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=False)
-            wl = u.watchlist_symbols()
-            symbols = sorted(set(fetch_nasdaq100_symbols()) | set(wl))
-        elif universe_name == "combined":
-            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=True, include_sp1000=True)
-            symbols = u.symbols
-        else:  # sp500
-            u = Universe(watchlist_path=_WATCHLIST_PATH, include_sp500=True)
-            symbols = u.symbols
+        else:
+            symbols = resolve_universe(universe_name, cfg)
 
         if not symbols:
             fail_job(job_id, "No symbols resolved for backtest")
@@ -238,8 +214,6 @@ def _run_backtest_task(
             "survivorship_note": result.survivorship_note,
             "strategy": strategy,
         }
-        if result.coverage_report is not None:
-            payload["coverage_report"] = result.coverage_report.to_dict()
 
         finish_job(job_id, payload)
 

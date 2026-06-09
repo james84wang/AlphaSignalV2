@@ -395,10 +395,14 @@ export function TradeChart({ symbol, trades, onClose }: Props) {
                       <p className="text-[9px] text-slate-600 uppercase mb-0.5">{key}</p>
                       <p
                         className={`text-xs font-mono ${
-                          val.sub >= 0 ? "text-emerald-400" : "text-red-400"
+                          !val.fired
+                            ? "text-slate-600"
+                            : val.side === "entry"
+                            ? "text-emerald-400"
+                            : "text-orange-400"
                         }`}
                       >
-                        {val.sub.toFixed(0)}
+                        {val.contribution.toFixed(0)}
                       </p>
                     </div>
                   ))}

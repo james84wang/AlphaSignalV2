@@ -1,87 +1,66 @@
-"""Tests for config loading and validation (implements spec §2.2 weight constraint)."""
+"""Tests for config loading and validation (Hidden-Divergence Confluence schema)."""
 from pathlib import Path
 
 import pytest
 
-from backend.app.config import AppConfig, StrategyConfig, Weights, load_config
-
+from backend.app.config import AppConfig, EntryWeights, StrategyConfig, load_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_weights_sum_to_100():
+def test_config_loads():
     cfg = load_config(REPO_ROOT / "config.yaml")
-    total = sum([
-        cfg.weights.candlestick, cfg.weights.p3, cfg.weights.p5,
-        cfg.weights.volume, cfg.weights.ema, cfg.weights.sr,
-        cfg.weights.macd, cfg.weights.rsi,
-    ])
-    assert abs(total - 100) < 1e-6, f"Weights sum to {total}, expected 100"
+    assert isinstance(cfg, AppConfig)
 
 
-def test_weights_valid_flag():
+def test_long_profile_present():
     cfg = load_config(REPO_ROOT / "config.yaml")
-    assert cfg.weights_valid is True
+    strat = cfg.get_strategy("hidden_div")
+    assert isinstance(strat, StrategyConfig)
 
 
-def test_tampered_weights_rejected():
-    """Config with weights ≠ 100 must raise ValueError."""
-    bad_raw = {
-        "candlestick": 99, "p3": 8, "p5": 12, "volume": 10,
-        "ema": 15, "sr": 15, "macd": 18, "rsi": 10,
-    }
-    with pytest.raises(ValueError, match="sum to 100"):
-        Weights.model_validate(bad_raw)
+def test_entry_and_exit_weights():
+    cfg = load_config(REPO_ROOT / "config.yaml")
+    strat = cfg.get_strategy("hidden_div")
+    # All four entry + four exit components exist and are non-negative.
+    for name in ("macd_hidden_bull", "rsi_hidden_bull", "rsi_zone", "demark_td9_buy"):
+        assert getattr(strat.entry.weights, name) >= 0
+    for name in ("demark_td13_sell", "macd_regular_bear", "rsi_regular_bear", "demark_td9_sell"):
+        assert getattr(strat.exit.weights, name) >= 0
+    assert strat.entry.threshold > 0
+    assert strat.exit.threshold > 0
+
+
+def test_regime_params():
+    cfg = load_config(REPO_ROOT / "config.yaml")
+    reg = cfg.get_strategy("hidden_div").regime
+    assert reg.ema_fast < reg.ema_slow  # fast EMA shorter than slow EMA
+
+
+def test_watchlists_configured():
+    cfg = load_config(REPO_ROOT / "config.yaml")
+    assert "Watchlist" in cfg.universe.watchlists
+    assert len(cfg.universe.watchlists) >= 1
+
+
+def test_negative_weight_rejected():
+    with pytest.raises(ValueError):
+        EntryWeights.model_validate(
+            {"macd_hidden_bull": -5, "rsi_hidden_bull": 35, "rsi_zone": 20, "demark_td9_buy": 10}
+        )
+
+
+def test_get_strategy_unknown_name_raises():
+    cfg = load_config(REPO_ROOT / "config.yaml")
+    with pytest.raises(ValueError, match="Unknown strategy"):
+        cfg.get_strategy("short")  # type: ignore[arg-type]
 
 
 def test_health_endpoint():
-    """Smoke-test that the FastAPI health route returns 200 with expected keys."""
     from fastapi.testclient import TestClient
     from backend.app.main import app
 
     client = TestClient(app)
     resp = client.get("/health")
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "ok"
-    assert data["weights_valid"] is True
-
-
-# ── Strategy profile tests ─────────────────────────────────────────────────────
-
-def test_both_profiles_present():
-    cfg = load_config(REPO_ROOT / "config.yaml")
-    long_strat = cfg.get_strategy("long")
-    short_strat = cfg.get_strategy("short")
-    assert isinstance(long_strat, StrategyConfig)
-    assert isinstance(short_strat, StrategyConfig)
-
-
-def test_long_profile_weights_sum_to_100():
-    cfg = load_config(REPO_ROOT / "config.yaml")
-    w = cfg.get_strategy("long").weights
-    total = w.candlestick + w.p3 + w.p5 + w.volume + w.ema + w.sr + w.macd + w.rsi
-    assert abs(total - 100) < 1e-6
-
-
-def test_short_profile_weights_sum_to_100():
-    cfg = load_config(REPO_ROOT / "config.yaml")
-    w = cfg.get_strategy("short").weights
-    total = w.candlestick + w.p3 + w.p5 + w.volume + w.ema + w.sr + w.macd + w.rsi
-    assert abs(total - 100) < 1e-6
-
-
-def test_get_strategy_unknown_name_raises():
-    cfg = load_config(REPO_ROOT / "config.yaml")
-    with pytest.raises(ValueError, match="Unknown strategy"):
-        cfg.get_strategy("medium")  # type: ignore[arg-type]
-
-
-def test_profiles_are_initially_identical():
-    """Day-one requirement: long and short profiles start as identical clones."""
-    cfg = load_config(REPO_ROOT / "config.yaml")
-    long_strat = cfg.get_strategy("long")
-    short_strat = cfg.get_strategy("short")
-    assert long_strat.weights.model_dump() == short_strat.weights.model_dump()
-    assert long_strat.thresholds.model_dump() == short_strat.thresholds.model_dump()
-    assert long_strat.regime.model_dump() == short_strat.regime.model_dump()
+    assert resp.json()["status"] == "ok"
